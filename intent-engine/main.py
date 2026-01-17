@@ -10,7 +10,6 @@ import os
 import json
 import signal
 import sys
-from pathlib import Path
 
 import paho.mqtt.client as mqtt
 from dotenv import load_dotenv
@@ -35,10 +34,17 @@ class DoorbellService:
         self.engine = None
         self.mqtt_client = None
         self.running = False
+        self.loop = None
         
     async def initialize(self):
         """Initialize all components"""
         logger.info("Initializing Doorbell Intent Engine...")
+
+        if not self.loop:
+            try:
+                self.loop = asyncio.get_running_loop()
+            except RuntimeError:
+                logger.warning("Event loop not set; MQTT callbacks will drop messages")
         
         # Initialize intent engine
         self.engine = DoorbellIntentEngine(self.config)
@@ -63,8 +69,11 @@ class DoorbellService:
             frigate_topic = self.config.mqtt_topic
             trigger_topic = self.config.mqtt_trigger_topic
 
-            client.subscribe(frigate_topic)
-            logger.info(f"Subscribed to {frigate_topic}")
+            if frigate_topic:
+                client.subscribe(frigate_topic)
+                logger.info(f"Subscribed to {frigate_topic}")
+            else:
+                logger.warning("MQTT topic not set; skipping Frigate subscription")
 
             # This lets Home Assistant / Node-RED / ESP32 doorbell presses trigger the same flow
             if trigger_topic and trigger_topic != frigate_topic:
@@ -85,13 +94,23 @@ class DoorbellService:
             # Manual trigger path
             if msg.topic == self.config.mqtt_trigger_topic:
                 logger.info(f"Processing manual trigger from {payload.get('source', 'unknown')}")
-                asyncio.create_task(self.handle_trigger(payload))
+                if self.loop:
+                    self.loop.call_soon_threadsafe(
+                        lambda: asyncio.create_task(self.handle_trigger(payload))
+                    )
+                else:
+                    logger.warning("Event loop not set; dropping manual trigger message")
                 return
 
             # Frigate event path
             if self.should_process_event(payload):
                 logger.info(f"Processing event: {payload.get('type')} for camera {payload.get('after', {}).get('camera')}")
-                asyncio.create_task(self.handle_event(payload))
+                if self.loop:
+                    self.loop.call_soon_threadsafe(
+                        lambda: asyncio.create_task(self.handle_event(payload))
+                    )
+                else:
+                    logger.warning("Event loop not set; dropping Frigate event")
                 
         except json.JSONDecodeError as e:
             logger.error(f"Failed to decode MQTT message: {e}")
@@ -193,6 +212,7 @@ class DoorbellService:
 async def main():
     """Main entry point"""
     service = DoorbellService()
+    service.loop = asyncio.get_running_loop()
     
     # Setup signal handlers
     def signal_handler(sig, frame):
