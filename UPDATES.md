@@ -30,7 +30,7 @@ Add these new lines:
 ```bash
 # MQTT Trigger Support
 ENABLE_MQTT_TRIGGERS=true
-MQTT_TRIGGER_TOPIC=doorbell/trigger
+MQTT_TRIGGER_TOPIC=doorbell/doorbell_press
 
 # Multi-camera support
 ENABLE_MULTI_CAMERA=true
@@ -67,7 +67,7 @@ You'll see:
   action:
     - service: mqtt.publish
       data:
-        topic: "doorbell/trigger"
+        topic: "doorbell/doorbell_press"
         payload: >
           {
             "camera_id": "YOUR_CAMERA_ID",
@@ -126,7 +126,7 @@ Frigate detects package + person → MQTT trigger → Special delivery greeting
 
 ```bash
 # Publish MQTT trigger
-mosquitto_pub -h localhost -t "doorbell/trigger" -m '{
+mosquitto_pub -h localhost -t "doorbell/doorbell_press" -m '{
   "camera_id": "your_camera_id",
   "source": "test"
 }'
@@ -138,7 +138,7 @@ Developer Tools → Services:
 ```yaml
 service: mqtt.publish
 data:
-  topic: doorbell/trigger
+  topic: doorbell/doorbell_press
   payload: '{"camera_id":"xyz","source":"ha_test"}'
 ```
 
@@ -225,7 +225,7 @@ Check the dashboard to see which of your cameras are compatible!
 
 ```bash
 # .env
-MQTT_TRIGGER_TOPIC=home/doorbell/trigger
+MQTT_TRIGGER_TOPIC=home/doorbell/doorbell_press
 ```
 
 ### Multiple Locations

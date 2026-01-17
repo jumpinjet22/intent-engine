@@ -322,7 +322,7 @@ Trigger different thinking sounds based on who's at the door:
 ```yaml
 - service: mqtt.publish
   data:
-    topic: doorbell/trigger
+    topic: doorbell/doorbell_press
     payload: >
       {
         "camera_id": "xyz",

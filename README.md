@@ -44,10 +44,14 @@ nano .env
 
 **Required settings:**
 ```bash
-UNIFI_PROTECT_HOST=https://192.168.1.1
-UNIFI_PROTECT_TOKEN=your_api_token_here
-CAMERA_ID=your_g6_camera_id
+MQTT_HOST=localhost
+MQTT_PORT=1883
+MQTT_USERNAME=doorbell
+MQTT_PASSWORD=changeme
 ```
+
+**MQTT authentication is required.** The service will refuse to start if `MQTT_USERNAME` or
+`MQTT_PASSWORD` are missing.【F:intent-engine/config.py†L17-L79】
 
 **To get your UniFi Protect API token:**
 1. Log into UniFi Protect
@@ -92,6 +96,10 @@ docker exec -it doorbell-ollama ollama pull llama3.2:3b
 
 # Start everything
 docker-compose up -d
+
+# Optional: pull a prebuilt intent-engine image
+# Set INTENT_ENGINE_IMAGE in .env to the published image name, then:
+docker-compose pull intent-engine
 
 # View logs
 docker-compose logs -f intent-engine
@@ -140,6 +148,31 @@ WHISPER_MODEL=base  # Recommended for RTX 2060 Super
 # Options: llama3.2:1b, llama3.2:3b, llama3.1:8b, etc.
 LLM_MODEL=llama3.2:3b  # Best balance for 8GB VRAM
 ```
+
+### MQTT Topics
+
+The intent engine subscribes to:
+
+- `frigate/events`
+- `doorbell/doorbell_press`
+- `doorbell/human_active`
+- `doorbell/dialogue/answer`
+
+It publishes:
+
+- `doorbell/session/state`
+- `doorbell/intent`
+- `doorbell/tts/request`
+- `doorbell/tts/status`
+- `doorbell/escalate`
+
+See `.env.example` for topic overrides.【F:.env.example†L1-L26】
+
+### MQTT Authentication (Required)
+
+The intent engine requires `MQTT_USERNAME` and `MQTT_PASSWORD` on startup. If you use the bundled
+Mosquitto container, create a password file and disable anonymous access in `mosquitto.conf` before
+starting the stack.【F:mosquitto/config/mosquitto.conf†L1-L5】
 
 ## Architecture
 

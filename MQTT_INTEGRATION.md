@@ -21,7 +21,7 @@ The doorbell intent engine supports MQTT triggers, allowing you to integrate wit
 │  MQTT Broker    │
 │  (Mosquitto)    │
 └────────┬────────┘
-         │ doorbell/trigger
+         │ doorbell/doorbell_press
          ▼
 ┌─────────────────┐
 │ Intent Engine   │
@@ -77,6 +77,19 @@ tail -f ./data/thinking.log.jsonl | jq
 }
 ```
 
+## Human Override
+
+Publish to `doorbell/human_active` to preempt AI speech and put the engine into human-handling mode.
+
+```json
+{
+  "active": true,
+  "ttl_s": 120
+}
+```
+
+Set `active` to `false` to clear the override.
+
 ## Home Assistant Integration
 
 ### Method 1: Automation (Recommended)
@@ -96,7 +109,7 @@ mqtt:
   action:
     - service: mqtt.publish
       data:
-        topic: "doorbell/trigger"
+        topic: "doorbell/doorbell_press"
         payload: >
           {
             "camera_id": "{{ state_attr('camera.front_door', 'camera_id') }}",
@@ -118,7 +131,7 @@ trigger_doorbell_ai:
   sequence:
     - service: mqtt.publish
       data:
-        topic: "doorbell/trigger"
+        topic: "doorbell/doorbell_press"
         payload: >
           {
             "camera_id": "your_camera_id",
@@ -136,7 +149,7 @@ trigger_doorbell_ai:
     {
         "id": "doorbell_trigger",
         "type": "mqtt out",
-        "topic": "doorbell/trigger",
+        "topic": "doorbell/doorbell_press",
         "payload": "{\"camera_id\":\"xyz\",\"source\":\"node_red\"}",
         "broker": "mqtt_broker",
         "name": "Trigger Doorbell AI"
@@ -177,7 +190,7 @@ void loop() {
   // Check if doorbell pressed
   if (digitalRead(DOORBELL_PIN) == LOW) {
     String payload = "{\"camera_id\":\"your_camera_id\",\"source\":\"esp32_doorbell\",\"context\":{\"trigger_type\":\"doorbell_press\"}}";
-    client.publish("doorbell/trigger", payload.c_str());
+    client.publish("doorbell/doorbell_press", payload.c_str());
     
     delay(3000);  // Debounce
   }
@@ -204,7 +217,7 @@ import time
 
 DOORBELL_PIN = 17
 MQTT_BROKER = "localhost"
-MQTT_TOPIC = "doorbell/trigger"
+MQTT_TOPIC = "doorbell/doorbell_press"
 
 GPIO.setmode(GPIO.BCM)
 GPIO.setup(DOORBELL_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
@@ -260,7 +273,7 @@ except KeyboardInterrupt:
 
 ```bash
 # Using mosquitto_pub (command line)
-mosquitto_pub -h localhost -t "doorbell/trigger" -m '{
+mosquitto_pub -h localhost -t "doorbell/doorbell_press" -m '{
   "camera_id": "your_camera_id",
   "source": "test",
   "context": {"trigger_type": "test"}
@@ -328,7 +341,7 @@ The system will:
   action:
     - service: mqtt.publish
       data:
-        topic: "doorbell/trigger"
+        topic: "doorbell/doorbell_press"
         payload: >
           {
             "camera_id": "xyz",
@@ -355,7 +368,7 @@ The system will:
   action:
     - service: mqtt.publish
       data:
-        topic: "doorbell/trigger"
+        topic: "doorbell/doorbell_press"
         payload: >
           {
             "camera_id": "{{ 'front_cam_id' if trigger.id == 'front' else 'back_cam_id' }}",
@@ -383,7 +396,7 @@ The system will:
   action:
     - service: mqtt.publish
       data:
-        topic: "doorbell/trigger"
+        topic: "doorbell/doorbell_press"
         payload: >
           {
             "camera_id": "xyz",
@@ -476,7 +489,7 @@ Notes:
 ### Subscribed by Intent Engine
 
 - `frigate/events` - Frigate detection events
-- `doorbell/trigger` - Manual triggers (configurable)
+- `doorbell/doorbell_press` - Manual triggers (configurable)
 
 ## Security Considerations
 

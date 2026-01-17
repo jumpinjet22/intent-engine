@@ -5,6 +5,7 @@ paho-mqtt>=1.6.0
 requests>=2.31.0
 numpy>=1.24.0
 scipy>=1.11.0
+tenacity>=8.2.3
 
 # Audio processing
 ffmpeg-python>=0.2.0
