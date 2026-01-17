@@ -6,46 +6,32 @@ services:
     container_name: doorbell-intent-engine
     environment:
       - OLLAMA_HOST=${OLLAMA_HOST:-http://ollama:11434}
+      - LLM_MODEL=${LLM_MODEL:-llama3.2:3b}
+      - LLM_ENABLED=${LLM_ENABLED:-true}
+      - LLM_TIMEOUT_S=${LLM_TIMEOUT_S:-8}
       - MQTT_HOST=${MQTT_HOST:-mqtt}
       - MQTT_PORT=${MQTT_PORT:-1883}
-      - MQTT_TOPIC=${MQTT_TOPIC:-frigate/events}
-      - MQTT_TRIGGER_TOPIC=${MQTT_TRIGGER_TOPIC:-doorbell/trigger}
-      - MQTT_INTENT_TOPIC=${MQTT_INTENT_TOPIC:-doorbell/intent}
-      - MQTT_STATUS_TOPIC=${MQTT_STATUS_TOPIC:-doorbell/status}
-      - MQTT_PUBLISH_INTENT=${MQTT_PUBLISH_INTENT:-true}
-      - MQTT_INCLUDE_TRANSCRIPT=${MQTT_INCLUDE_TRANSCRIPT:-true}
-      - FRIGATE_HOST=${FRIGATE_HOST:-frigate}
-      - FRIGATE_PORT=${FRIGATE_PORT:-5000}
-      - FRIGATE_API_KEY=${FRIGATE_API_KEY:-}
-      # Optional: Frigate face library registration (repeat solicitor deterrence)
-      - FRIGATE_FACES_ENABLED=${FRIGATE_FACES_ENABLED:-false}
-      - FRIGATE_FACES_INTENTS=${FRIGATE_FACES_INTENTS:-solicitor}
-      - FRIGATE_FACES_MIN_CONFIDENCE=${FRIGATE_FACES_MIN_CONFIDENCE:-0.85}
-      - FRIGATE_FACES_PREFIX=${FRIGATE_FACES_PREFIX:-solicitor-}
-      - FRIGATE_FACES_AUTO_TRAIN=${FRIGATE_FACES_AUTO_TRAIN:-true}
-      - FRIGATE_FACES_TRAIN_MODE=${FRIGATE_FACES_TRAIN_MODE:-classify}
-      - FRIGATE_FACES_NAME_MAXLEN=${FRIGATE_FACES_NAME_MAXLEN:-48}
-      - FRIGATE_FACES_STORE_DIR=${FRIGATE_FACES_STORE_DIR:-/data/faces}
-      - FRIGATE_FACES_DRY_RUN=${FRIGATE_FACES_DRY_RUN:-false}
-      - PROTECT_BASE_URL=${PROTECT_BASE_URL:-}
-      - PROTECT_API_KEY=${PROTECT_API_KEY:-}
-      - PROTECT_VERIFY_SSL=${PROTECT_VERIFY_SSL:-false}
-      - PROTECT_CAMERA_ID=${PROTECT_CAMERA_ID:-}
-      - PROTECT_RTSP_QUALITY=${PROTECT_RTSP_QUALITY:-medium}
-      - CAMERA_RTSP_URL=${CAMERA_RTSP_URL:-}
-      - TTS_ENGINE=${TTS_ENGINE:-xtts}
-      - WHISPER_MODEL=${WHISPER_MODEL:-base}
-      - LLM_MODEL=${LLM_MODEL:-llama3.2:3b}
-      # Optional structured session logging (JSONL)
-      - THOUGHT_LOG_ENABLED=${THOUGHT_LOG_ENABLED:-false}
-      - THOUGHT_LOG_PATH=${THOUGHT_LOG_PATH:-/data/thinking.log.jsonl}
-      - THOUGHT_LOG_INCLUDE_TRANSCRIPT=${THOUGHT_LOG_INCLUDE_TRANSCRIPT:-false}
-      - THOUGHT_LOG_REDACT_PII=${THOUGHT_LOG_REDACT_PII:-true}
+      - MQTT_USERNAME=${MQTT_USERNAME}
+      - MQTT_PASSWORD=${MQTT_PASSWORD}
+      - MQTT_CLIENT_ID=${MQTT_CLIENT_ID:-}
+      - MQTT_TLS_ENABLED=${MQTT_TLS_ENABLED:-false}
+      - MQTT_TLS_CA_CERT=${MQTT_TLS_CA_CERT:-}
+      - MQTT_TOPIC_FRIGATE=${MQTT_TOPIC_FRIGATE:-frigate/events}
+      - MQTT_TOPIC_DOORBELL_PRESS=${MQTT_TOPIC_DOORBELL_PRESS:-doorbell/doorbell_press}
+      - MQTT_TOPIC_HUMAN_ACTIVE=${MQTT_TOPIC_HUMAN_ACTIVE:-doorbell/human_active}
+      - MQTT_TOPIC_DIALOGUE_ANSWER=${MQTT_TOPIC_DIALOGUE_ANSWER:-doorbell/dialogue/answer}
+      - MQTT_TOPIC_SESSION_STATE=${MQTT_TOPIC_SESSION_STATE:-doorbell/session/state}
+      - MQTT_TOPIC_INTENT=${MQTT_TOPIC_INTENT:-doorbell/intent}
+      - MQTT_TOPIC_TTS_REQUEST=${MQTT_TOPIC_TTS_REQUEST:-doorbell/tts/request}
+      - MQTT_TOPIC_TTS_STATUS=${MQTT_TOPIC_TTS_STATUS:-doorbell/tts/status}
+      - MQTT_TOPIC_ESCALATE=${MQTT_TOPIC_ESCALATE:-doorbell/escalate}
+      - CONFIDENCE_AUTO_HANDLE=${CONFIDENCE_AUTO_HANDLE:-0.75}
+      - CONFIDENCE_CLARIFY=${CONFIDENCE_CLARIFY:-0.5}
+      - CLARIFICATION_MAX=${CLARIFICATION_MAX:-2}
+      - SAFETY_KEYWORDS=${SAFETY_KEYWORDS:-police,emergency,fire,gas,leak,injury,weapon,warrant,lawsuit,sign,contract}
+      - TALKBACK_MOCK_ENABLED=${TALKBACK_MOCK_ENABLED:-true}
     volumes:
-      - ./config:/app/config
-      - ./sounds:/app/sounds
       - ./data:/data
-      - intent_cache:/app/cache
     deploy:
       resources:
         reservations:
@@ -54,6 +40,3 @@ services:
               count: 1
               capabilities: [gpu]
     restart: unless-stopped
-
-volumes:
-  intent_cache:
