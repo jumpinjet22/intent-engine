@@ -23,6 +23,7 @@ services:
   # Intent Engine application
   intent-engine:
     build: ./intent-engine
+    image: ${INTENT_ENGINE_IMAGE:-doorbell-intent-engine:latest}
     container_name: doorbell-intent-engine
     depends_on:
       - ollama

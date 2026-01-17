@@ -3,6 +3,7 @@ version: '3.8'
 services:
   intent-engine:
     build: ./intent-engine
+    image: ${INTENT_ENGINE_IMAGE:-doorbell-intent-engine:latest}
     container_name: doorbell-intent-engine
     environment:
       - OLLAMA_HOST=${OLLAMA_HOST:-http://ollama:11434}

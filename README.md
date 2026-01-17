@@ -97,6 +97,10 @@ docker exec -it doorbell-ollama ollama pull llama3.2:3b
 # Start everything
 docker-compose up -d
 
+# Optional: pull a prebuilt intent-engine image
+# Set INTENT_ENGINE_IMAGE in .env to the published image name, then:
+docker-compose pull intent-engine
+
 # View logs
 docker-compose logs -f intent-engine
 ```
