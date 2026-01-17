@@ -1,255 +1,272 @@
 #!/usr/bin/env python3
-"""
-Doorbell Intent Engine
-Handles doorbell events from Frigate, processes with LLM, and responds via UniFi Protect talkback
-"""
+"""Doorbell intent engine entrypoint."""
 
-import asyncio
-import logging
-import os
+from __future__ import annotations
+
 import json
+import logging
 import signal
 import sys
-import threading
+from datetime import datetime, timezone
+from typing import Any, Dict, Optional
 
-import paho.mqtt.client as mqtt
-from dotenv import load_dotenv
-
-from intent_engine import DoorbellIntentEngine
 from config import Config
-from webhook_server import WebhookServer
+from dialogue import DialogueManager
+from intent import IntentClassifier
+from mqtt import AuthenticatedMQTTClient
+from state_machine import SessionState, StateMachine
+from talkback import TalkbackDriver
 
-# Load environment variables
-load_dotenv()
 
-# Setup logging
-logging.basicConfig(
-    level=os.getenv('LOG_LEVEL', 'INFO'),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
 logger = logging.getLogger(__name__)
 
 
 class DoorbellService:
-    def __init__(self):
-        self.config = Config()
-        self.engine = None
-        self.mqtt_client = None
-        self.running = False
-        self.loop = None
-        self.webhook_thread = None
-        
-    async def initialize(self):
-        """Initialize all components"""
-        logger.info("Initializing Doorbell Intent Engine...")
+    def __init__(self, config: Config):
+        self.config = config
+        self.mqtt = AuthenticatedMQTTClient(config)
+        self.mqtt.client.on_message = self._on_message
+        self.mqtt.set_on_connected(self._on_connected)
 
-        if not self.loop:
-            try:
-                self.loop = asyncio.get_running_loop()
-            except RuntimeError:
-                logger.warning("Event loop not set; MQTT callbacks will drop messages")
-        
-        # Initialize intent engine
-        self.engine = DoorbellIntentEngine(self.config)
-        await self.engine.initialize()
-        
-        # Setup MQTT client
-        self.mqtt_client = mqtt.Client(client_id="doorbell-intent-engine")
-        self.mqtt_client.on_connect = self.on_mqtt_connect
-        self.mqtt_client.on_message = self.on_mqtt_message
-        self.mqtt_client.on_disconnect = self.on_mqtt_disconnect
+        self.state_machine = StateMachine(self._publish_state)
+        self.intent_classifier = IntentClassifier(config)
+        self.dialogue = DialogueManager(config.clarification_max)
+        self.talkback = TalkbackDriver(config, self.mqtt)
 
-        # Give the engine access to MQTT for publishing intents/status
-        self.engine.set_mqtt_client(self.mqtt_client)
+        self.last_transcript: str = ""
+        self.last_intent: Dict[str, Any] = {}
+        self.last_tts_request_id: Optional[str] = None
+        self.human_active: bool = False
 
-        if self.config.webhook_enabled:
-            self.webhook_thread = threading.Thread(
-                target=self._start_webhook_server,
-                name="webhook-server",
-                daemon=True,
-            )
-            self.webhook_thread.start()
-            logger.info(
-                "Webhook server listening on http://%s:%s%s",
-                self.config.webhook_host,
-                self.config.webhook_port,
-                self.config.webhook_path,
-            )
-        
-        logger.info("Initialization complete")
-        
-    def on_mqtt_connect(self, client, userdata, flags, rc):
-        """MQTT connection callback"""
-        if rc == 0:
-            logger.info("Connected to MQTT broker")
-            # Subscribe to Frigate events + optional manual triggers
-            frigate_topic = self.config.mqtt_topic
-            trigger_topic = self.config.mqtt_trigger_topic
+    def start(self) -> None:
+        self._configure_logging()
+        self.mqtt.connect()
+        self._publish_state(SessionState.IDLE, "startup")
 
-            if frigate_topic:
-                client.subscribe(frigate_topic)
-                logger.info(f"Subscribed to {frigate_topic}")
-            else:
-                logger.warning("MQTT topic not set; skipping Frigate subscription")
+    def shutdown(self) -> None:
+        self._publish_state(SessionState.IDLE, "shutdown")
+        self.mqtt.disconnect()
 
-            # This lets Home Assistant / Node-RED / ESP32 doorbell presses trigger the same flow
-            if trigger_topic and trigger_topic != frigate_topic:
-                client.subscribe(trigger_topic)
-                logger.info(f"Subscribed to {trigger_topic}")
-        else:
-            logger.error(f"Failed to connect to MQTT broker: {rc}")
-    
-    def on_mqtt_disconnect(self, client, userdata, rc):
-        """MQTT disconnection callback"""
-        logger.warning(f"Disconnected from MQTT broker: {rc}")
-        
-    def on_mqtt_message(self, client, userdata, msg):
-        """Handle incoming MQTT messages from Frigate or a manual trigger topic"""
+    def _configure_logging(self) -> None:
+        logging.basicConfig(
+            level=self.config.log_level,
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        )
+
+    def _on_connected(self, client) -> None:
+        topics = [
+            self.config.mqtt_topic_frigate,
+            self.config.mqtt_topic_doorbell_press,
+            self.config.mqtt_topic_human_active,
+            self.config.mqtt_topic_dialogue_answer,
+            self.config.mqtt_topic_tts_request,
+        ]
+        for topic in topics:
+            client.subscribe(topic)
+            logger.info("Subscribed to MQTT topic", extra={"topic": topic})
+
+    def _on_message(self, client, userdata, msg) -> None:
         try:
-            payload = json.loads(msg.payload.decode())
-
-            # Manual trigger path
-            if msg.topic == self.config.mqtt_trigger_topic:
-                logger.info(f"Processing manual trigger from {payload.get('source', 'unknown')}")
-                if self.loop:
-                    self.loop.call_soon_threadsafe(
-                        lambda: asyncio.create_task(self.handle_trigger(payload))
-                    )
-                else:
-                    logger.warning("Event loop not set; dropping manual trigger message")
+            payload = json.loads(msg.payload.decode("utf-8")) if msg.payload else {}
+            if msg.topic == self.config.mqtt_topic_human_active:
+                self._handle_human_active(payload)
                 return
 
-            # Frigate event path
-            if self.should_process_event(payload):
-                logger.info(f"Processing event: {payload.get('type')} for camera {payload.get('after', {}).get('camera')}")
-                if self.loop:
-                    self.loop.call_soon_threadsafe(
-                        lambda: asyncio.create_task(self.handle_event(payload))
-                    )
-                else:
-                    logger.warning("Event loop not set; dropping Frigate event")
-                
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to decode MQTT message: {e}")
-        except Exception as e:
-            logger.error(f"Error processing MQTT message: {e}", exc_info=True)
+            if msg.topic == self.config.mqtt_topic_dialogue_answer:
+                self._handle_dialogue_answer(payload)
+                return
 
-    async def handle_trigger(self, trigger_payload: dict):
-        """Handle a manual trigger (doorbell press, button, etc.)"""
-        try:
-            await self.engine.handle_trigger_event(trigger_payload)
-        except Exception as e:
-            logger.error(f"Error handling trigger event: {e}", exc_info=True)
-    
-    def should_process_event(self, event):
-        """Determine if we should process this Frigate event"""
-        # Check event type
-        event_type = event.get('type')
-        if event_type not in ['new', 'update']:
-            return False
-        
-        # Get event details
-        after = event.get('after', {})
-        
-        # Check if it's the right camera (selected via UI or FRIGATE_CAMERA)
-        camera = (after.get('camera') or '').strip()
-        selected = self.config.selected_frigate_camera
-        if selected:
-            # Frigate cameras are normally exact names
-            if camera != selected:
-                return False
-        
-        # Check for person detection
-        label = after.get('label', '')
-        if label != 'person':
-            return False
-        
-        # Check if person is at the door (not just passing by)
-        # You can add zone filtering here
-        current_zones = after.get('current_zones', [])
-        if 'entry' not in current_zones and 'door' not in current_zones:
-            # If no zones configured, process all person detections
-            if len(current_zones) > 0:
-                return False
-        
-        # Avoid processing the same event multiple times
-        if event_type == 'update':
-            # Only process if person has been there for a bit
-            stationary = after.get('stationary', False)
-            if not stationary:
-                return False
-        
-        return True
-    
-    async def handle_event(self, event):
-        """Handle a doorbell event"""
-        try:
-            logger.info("Doorbell event triggered - processing...")
-            await self.engine.handle_doorbell_event(event)
-            logger.info("Event processing complete")
-            
-        except Exception as e:
-            logger.error(f"Error handling doorbell event: {e}", exc_info=True)
-    
-    async def run(self):
-        """Main service loop"""
-        self.running = True
-        
-        # Connect to MQTT broker
-        logger.info(f"Connecting to MQTT broker at {self.config.mqtt_host}:{self.config.mqtt_port}")
-        self.mqtt_client.connect(self.config.mqtt_host, self.config.mqtt_port, 60)
-        
-        # Start MQTT loop in background
-        self.mqtt_client.loop_start()
-        
-        # Keep running
-        try:
-            while self.running:
-                await asyncio.sleep(1)
-        except KeyboardInterrupt:
-            logger.info("Received shutdown signal")
-        finally:
-            await self.shutdown()
-    
-    async def shutdown(self):
-        """Clean shutdown"""
-        logger.info("Shutting down...")
-        self.running = False
-        
-        if self.mqtt_client:
-            self.mqtt_client.loop_stop()
-            self.mqtt_client.disconnect()
-        
-        if self.engine:
-            await self.engine.cleanup()
-        
-        logger.info("Shutdown complete")
+            if msg.topic == self.config.mqtt_topic_tts_request:
+                self.talkback.handle_tts_request(payload)
+                return
 
-    def _start_webhook_server(self):
-        webhook = WebhookServer(self.config, self.engine, self.loop)
-        webhook.run()
+            if msg.topic in {self.config.mqtt_topic_frigate, self.config.mqtt_topic_doorbell_press}:
+                self._handle_trigger(payload, source=msg.topic)
+                return
+        except json.JSONDecodeError:
+            logger.warning("Invalid JSON payload", extra={"topic": msg.topic})
+        except Exception as exc:
+            logger.exception("Unhandled MQTT processing error", extra={"topic": msg.topic, "error": str(exc)})
+
+    def _handle_human_active(self, payload: Dict[str, Any]) -> None:
+        active = bool(payload.get("active", False))
+        ttl_s = int(payload.get("ttl_s", 120))
+        self.human_active = active
+        self.talkback.set_human_active(active)
+        if active:
+            self.state_machine.transition(SessionState.HUMAN_HANDLING, f"human_override ttl_s={ttl_s}")
+            self.talkback.cancel_all()
+        else:
+            self.state_machine.transition(SessionState.IDLE, "human_override_cleared")
+
+    def _handle_trigger(self, payload: Dict[str, Any], source: str) -> None:
+        self.dialogue.reset()
+        self.state_machine.transition(SessionState.RINGING, "doorbell_triggered")
+        transcript = self._extract_transcript(payload)
+        self.last_transcript = transcript
+
+        if self.human_active:
+            self.state_machine.transition(SessionState.HUMAN_HANDLING, "human_override")
+            return
+
+        self.state_machine.transition(SessionState.AI_HANDLING, "processing")
+        if self._contains_safety_keywords(transcript):
+            self._escalate("safety_keyword", transcript, intent_guess="emergency", confidence=1.0)
+            return
+
+        if self._visitor_requested_human(transcript):
+            self._escalate("visitor_requested_human", transcript, intent_guess="unknown", confidence=0.4)
+            return
+
+        intent_result = self.intent_classifier.classify(transcript, {"source": source})
+        self.last_intent = intent_result
+        self._publish_intent(intent_result)
+
+        confidence = float(intent_result.get("confidence", 0.0))
+        if confidence >= self.config.confidence_auto_handle:
+            self._handle_intent(intent_result)
+            return
+
+        if confidence >= self.config.confidence_clarify and self.dialogue.should_clarify(confidence):
+            self.state_machine.transition(SessionState.CLARIFYING, "needs_clarification")
+            question = self.dialogue.build_clarification_question()
+            self._publish_tts_request(question, priority="ai")
+            return
+
+        self._escalate("low_confidence", transcript, intent_guess=intent_result.get("intent", "unknown"), confidence=confidence)
+
+    def _handle_dialogue_answer(self, payload: Dict[str, Any]) -> None:
+        if self.state_machine.state != SessionState.CLARIFYING:
+            return
+        answer = str(payload.get("answer", "")).strip()
+        resolved = self.dialogue.resolve_from_answer(answer)
+        if resolved:
+            self._handle_intent({"intent": resolved, "confidence": 0.7, "entities": {}, "suggested_actions": []})
+            return
+
+        if self.dialogue.should_clarify(0.6):
+            question = self.dialogue.build_clarification_question()
+            self._publish_tts_request(question, priority="ai")
+            return
+
+        self._escalate("clarification_failed", self.last_transcript, intent_guess="unknown", confidence=0.4)
+
+    def _handle_intent(self, intent_result: Dict[str, Any]) -> None:
+        intent = intent_result.get("intent", "unknown")
+        response = _response_for_intent(intent)
+        if intent == "emergency":
+            self._escalate("emergency", self.last_transcript, intent_guess=intent, confidence=1.0)
+            return
+        self._publish_tts_request(response, priority="ai")
+        self.state_machine.transition(SessionState.COOLDOWN, "response_sent")
+
+    def _publish_state(self, state: SessionState, reason: str) -> None:
+        self.mqtt.publish(
+            self.config.mqtt_topic_session_state,
+            {"state": state.value, "reason": reason, "ts": _iso_ts()},
+        )
+
+    def _publish_intent(self, intent_result: Dict[str, Any]) -> None:
+        payload = {
+            "intent": intent_result.get("intent", "unknown"),
+            "confidence": float(intent_result.get("confidence", 0.0)),
+            "entities": intent_result.get("entities", {}),
+            "ts": _iso_ts(),
+        }
+        self.mqtt.publish(self.config.mqtt_topic_intent, payload)
+
+    def _publish_tts_request(self, text: str, priority: str) -> None:
+        if self.human_active:
+            return
+        request_id = _request_id()
+        self.last_tts_request_id = request_id
+        self.mqtt.publish(
+            self.config.mqtt_topic_tts_request,
+            {"text": text, "priority": priority, "request_id": request_id, "ts": _iso_ts()},
+        )
+
+    def _escalate(self, reason: str, transcript: str, intent_guess: str, confidence: float) -> None:
+        self.state_machine.transition(SessionState.ESCALATED, reason)
+        self.mqtt.publish(
+            self.config.mqtt_topic_escalate,
+            {
+                "reason": reason,
+                "summary": "Escalated to human",
+                "last_transcript": transcript,
+                "intent_guess": intent_guess,
+                "confidence": confidence,
+                "ts": _iso_ts(),
+            },
+        )
+
+    def _extract_transcript(self, payload: Dict[str, Any]) -> str:
+        for key in ("transcript", "text", "speech"):
+            value = payload.get(key)
+            if value:
+                return str(value)
+        after = payload.get("after") or {}
+        if isinstance(after, dict):
+            speech = after.get("speech")
+            if speech:
+                return str(speech)
+        return ""
+
+    def _contains_safety_keywords(self, transcript: str) -> bool:
+        text = transcript.lower()
+        return any(keyword in text for keyword in self.config.safety_keywords)
+
+    def _visitor_requested_human(self, transcript: str) -> bool:
+        text = transcript.lower()
+        return any(term in text for term in ["human", "homeowner", "owner", "person"])
 
 
-async def main():
-    """Main entry point"""
-    service = DoorbellService()
-    service.loop = asyncio.get_running_loop()
-    
-    # Setup signal handlers
-    def signal_handler(sig, frame):
-        logger.info(f"Received signal {sig}")
-        asyncio.create_task(service.shutdown())
-    
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-    
+def _response_for_intent(intent: str) -> str:
+    responses = {
+        "delivery": "Thanks. You can leave the package by the door.",
+        "guest": "Thanks for coming by. I will let the homeowner know you're here.",
+        "service": "Thanks. Please wait a moment while I notify the homeowner.",
+        "question": "One moment. I will get the homeowner to help with that.",
+        "solicitor": "This is a no-soliciting household. Please leave written info if needed.",
+        "unknown": "Hello. How can I help you today?",
+    }
+    return responses.get(intent, responses["unknown"])
+
+
+def _iso_ts() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _request_id() -> str:
+    import uuid
+
+    return uuid.uuid4().hex
+
+
+def main() -> None:
     try:
-        await service.initialize()
-        await service.run()
-    except Exception as e:
-        logger.error(f"Fatal error: {e}", exc_info=True)
+        config = Config()
+    except ValueError as exc:
+        logging.basicConfig(level="ERROR", format="%(asctime)s - %(levelname)s - %(message)s")
+        logger.error("Configuration error: %s", exc)
         sys.exit(1)
+
+    service = DoorbellService(config)
+
+    def _handle_signal(signum, frame):
+        logger.info("Received shutdown signal", extra={"signal": signum})
+        service.shutdown()
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, _handle_signal)
+    signal.signal(signal.SIGTERM, _handle_signal)
+
+    service.start()
+
+    try:
+        signal.pause()
+    except KeyboardInterrupt:
+        service.shutdown()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

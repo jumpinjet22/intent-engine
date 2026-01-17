@@ -21,7 +21,7 @@ The doorbell intent engine supports MQTT triggers, allowing you to integrate wit
 │  MQTT Broker    │
 │  (Mosquitto)    │
 └────────┬────────┘
-         │ doorbell/trigger
+         │ doorbell/doorbell_press
          ▼
 ┌─────────────────┐
 │ Intent Engine   │
@@ -77,6 +77,19 @@ tail -f ./data/thinking.log.jsonl | jq
 }
 ```
 
+## Human Override
+
+Publish to `doorbell/human_active` to preempt AI speech and put the engine into human-handling mode.
+
+```json
+{
+  "active": true,
+  "ttl_s": 120
+}
+```
+
+Set `active` to `false` to clear the override.
+
 ## Home Assistant Integration
 
 ### Method 1: Automation (Recommended)
@@ -96,7 +109,7 @@ mqtt:
   action:
     - service: mqtt.publish
       data:
-        topic: "doorbell/trigger"
+        topic: "doorbell/doorbell_press"
         payload: >
           {
             "camera_id": "{{ state_attr('camera.front_door', 'camera_id') }}",
@@ -118,7 +131,7 @@ trigger_doorbell_ai:
   sequence:
     - service: mqtt.publish
       data:
-        topic: "doorbell/trigger"
+        topic: "doorbell/doorbell_press"
         payload: >
           {
             "camera_id": "your_camera_id",
@@ -136,7 +149,7 @@ trigger_doorbell_ai:
     {
         "id": "doorbell_trigger",
         "type": "mqtt out",
-        "topic": "doorbell/trigger",
+        "topic": "doorbell/doorbell_press",
         "payload": "{\"camera_id\":\"xyz\",\"source\":\"node_red\"}",
         "broker": "mqtt_broker",
         "name": "Trigger Doorbell AI"
@@ -177,7 +190,7 @@ void loop() {
   // Check if doorbell pressed
   if (digitalRead(DOORBELL_PIN) == LOW) {
     String payload = "{\"camera_id\":\"your_camera_id\",\"source\":\"esp32_doorbell\",\"context\":{\"trigger_type\":\"doorbell_press\"}}";
-    client.publish("doorbell/trigger", payload.c_str());
+    client.publish("doorbell/doorbell_press", payload.c_str());
     
     delay(3000);  // Debounce
   }
@@ -204,7 +217,7 @@ import time
 
 DOORBELL_PIN = 17
 MQTT_BROKER = "localhost"
-MQTT_TOPIC = "doorbell/trigger"
+MQTT_TOPIC = "doorbell/doorbell_press"
 
 GPIO.setmode(GPIO.BCM)
 GPIO.setup(DOORBELL_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
@@ -239,45 +252,6 @@ except KeyboardInterrupt:
     client.disconnect()
 ```
 
-## UniFi Protect Webhooks (Optional)
-
-If you want the G6 doorbell press to trigger the same flow without MQTT, enable the built-in webhook
-server and point UniFi Protect to it.
-
-### Environment Variables
-
-- `WEBHOOK_ENABLED=true`
-- `WEBHOOK_HOST=0.0.0.0`
-- `WEBHOOK_PORT=8088`
-- `WEBHOOK_PATH=/webhook/unifi`
-- `WEBHOOK_TOKEN=your-shared-secret` (optional)
-- `WEBHOOK_DOORBELL_EVENTS=doorbell,ring,doorbell_ring`
-
-### UniFi Webhook Payload
-
-The webhook expects JSON. These are common fields supported:
-
-```json
-{
-  "event": "doorbell",
-  "camera_id": "66d025b301ebc903e80003ea",
-  "camera_name": "Front Door Camera"
-}
-```
-
-### Human Acknowledgment Flow
-
-When you or a homeowner is on the way, call the human acknowledgment endpoint to announce it at
-the doorbell speaker.
-
-**Endpoint:** `POST /webhook/human-ack`
-
-```json
-{
-  "message": "The homeowner is on the way. One moment please."
-}
-```
-
 ## Using Web Dashboard
 
 ### Camera Selection
@@ -299,7 +273,7 @@ the doorbell speaker.
 
 ```bash
 # Using mosquitto_pub (command line)
-mosquitto_pub -h localhost -t "doorbell/trigger" -m '{
+mosquitto_pub -h localhost -t "doorbell/doorbell_press" -m '{
   "camera_id": "your_camera_id",
   "source": "test",
   "context": {"trigger_type": "test"}
@@ -367,7 +341,7 @@ The system will:
   action:
     - service: mqtt.publish
       data:
-        topic: "doorbell/trigger"
+        topic: "doorbell/doorbell_press"
         payload: >
           {
             "camera_id": "xyz",
@@ -394,7 +368,7 @@ The system will:
   action:
     - service: mqtt.publish
       data:
-        topic: "doorbell/trigger"
+        topic: "doorbell/doorbell_press"
         payload: >
           {
             "camera_id": "{{ 'front_cam_id' if trigger.id == 'front' else 'back_cam_id' }}",
@@ -422,7 +396,7 @@ The system will:
   action:
     - service: mqtt.publish
       data:
-        topic: "doorbell/trigger"
+        topic: "doorbell/doorbell_press"
         payload: >
           {
             "camera_id": "xyz",
@@ -515,7 +489,7 @@ Notes:
 ### Subscribed by Intent Engine
 
 - `frigate/events` - Frigate detection events
-- `doorbell/trigger` - Manual triggers (configurable)
+- `doorbell/doorbell_press` - Manual triggers (configurable)
 
 ## Security Considerations
 
