@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Doorbell Intent Engine</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
+    .container { max-width: 1200px; margin: 0 auto; background: #ffffff; padding: 20px; border-radius: 10px; }
+    .columns { display: flex; gap: 20px; flex-wrap: wrap; }
+    .card { flex: 1 1 360px; background: #fafafa; padding: 15px; border-radius: 8px; border: 1px solid #e5e5e5; }
+    label { display: block; margin-top: 10px; font-weight: bold; }
+    select, input { width: 100%; padding: 8px; margin-top: 6px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; }
+    button { margin-top: 12px; padding: 10px 12px; border: 0; border-radius: 6px; cursor: pointer; }
+    button.save { background: #4CAF50; color: #fff; }
+    button.refresh { background: #2196F3; color: #fff; }
+    .small { color: #666; font-size: 0.9em; }
+    .event { border: 1px solid #e5e5e5; border-radius: 8px; padding: 10px; margin: 10px 0; background: #ffffff; }
+    .event-header { font-weight: bold; display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+    .event-time { color: #666; font-size: 0.85em; margin-top: 4px; }
+    .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #e9f5ff; color: #0b5394; font-size: 0.85em; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Doorbell Intent Engine</h1>
+    <div class="columns">
+      <div class="card">
+        <h2>Setup</h2>
+        <div class="small">Hosts/keys stay in env vars. Pick which camera to use here.</div>
+
+        <label for="frigate_camera">Frigate camera (events + snapshots)</label>
+        <select id="frigate_camera"></select>
+
+        <label for="protect_camera_id">UniFi Protect talkback camera (optional)</label>
+        <select id="protect_camera_id"></select>
+
+        <label for="camera_rtsp_url">RTSP/RTSPS URL override (optional)</label>
+        <input id="camera_rtsp_url" placeholder="rtsps://... (leave blank to use Protect discovery)" />
+
+        <button class="save" onclick="saveSetup()">Save setup</button>
+      </div>
+
+      <div class="card">
+        <h2>Events</h2>
+        <div class="small">Live view of recent Frigate events coming over MQTT.</div>
+        <button class="refresh" onclick="refreshEvents()">Refresh now</button>
+        <div id="events"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
