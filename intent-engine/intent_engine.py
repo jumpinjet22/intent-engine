@@ -752,6 +752,21 @@ Rules:
                 await self.speak_text("Hello!")
         except Exception as e:
             logger.error(f"Error playing acknowledgment: {e}")
+
+    async def play_human_acknowledgment(self, message: str, context: Optional[Dict] = None):
+        """Play a human-coming acknowledgment message."""
+        session_id = self._new_session_id()
+        self._tlog("human_acknowledgment", session_id, message=message, context=context or {})
+        self._mqtt_publish(self.config.mqtt_status_topic, {
+            "event": "human_acknowledgment",
+            "timestamp": datetime.now().isoformat(),
+            "message": message,
+            "context": context or {},
+        })
+        try:
+            await self.speak_text(message)
+        except Exception as e:
+            logger.error(f"Error playing human acknowledgment: {e}")
     
     async def capture_visitor_audio(self, duration: int = None) -> Optional[np.ndarray]:
         """

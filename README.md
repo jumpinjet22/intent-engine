@@ -336,6 +336,19 @@ Running locally vs cloud APIs (100 doorbell events/month):
 
 Plus: Complete privacy, no internet dependency, unlimited usage
 
+## Webhook Integration (Optional)
+
+If you prefer webhooks over MQTT for the UniFi doorbell ring, enable the built-in webhook server:
+
+```bash
+WEBHOOK_ENABLED=true
+WEBHOOK_PORT=8088
+WEBHOOK_PATH=/webhook/unifi
+```
+
+You can also announce that a human is on the way by calling `POST /webhook/human-ack` with a JSON
+payload containing a `message` string. See `MQTT_INTEGRATION.md` for full examples.【F:MQTT_INTEGRATION.md†L141-L190】
+
 ## Support
 
 For issues or questions:

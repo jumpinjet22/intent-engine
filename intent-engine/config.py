@@ -110,6 +110,18 @@ class Config(BaseModel):
     debug: bool = Field(default_factory=lambda: os.getenv('DEBUG', 'false').lower() == 'true')
     log_level: str = Field(default_factory=lambda: os.getenv('LOG_LEVEL', 'INFO'))
 
+    # Webhook configuration (optional)
+    webhook_enabled: bool = Field(default_factory=lambda: os.getenv('WEBHOOK_ENABLED', 'false').lower() == 'true')
+    webhook_host: str = Field(default_factory=lambda: os.getenv('WEBHOOK_HOST', '0.0.0.0'))
+    webhook_port: int = Field(default_factory=lambda: int(os.getenv('WEBHOOK_PORT', '8088')))
+    webhook_path: str = Field(default_factory=lambda: os.getenv('WEBHOOK_PATH', '/webhook/unifi'))
+    webhook_human_ack_path: str = Field(default_factory=lambda: os.getenv('WEBHOOK_HUMAN_ACK_PATH', '/webhook/human-ack'))
+    webhook_token: str = Field(default_factory=lambda: os.getenv('WEBHOOK_TOKEN', ''))
+    webhook_doorbell_events: str = Field(default_factory=lambda: os.getenv('WEBHOOK_DOORBELL_EVENTS', 'doorbell,ring,doorbell_ring'))
+
+    # Human acknowledgment (owner coming) response
+    human_acknowledgment_text: str = Field(default_factory=lambda: os.getenv('HUMAN_ACKNOWLEDGMENT_TEXT', 'The homeowner is on the way. One moment please.'))
+
     # "Thought" logging (structured JSONL) for debugging sessions
     thought_log_enabled: bool = Field(default_factory=lambda: os.getenv('THOUGHT_LOG_ENABLED', 'false').lower() == 'true')
     thought_log_path: str = Field(default_factory=lambda: os.getenv('THOUGHT_LOG_PATH', '/data/thinking.log.jsonl'))
@@ -209,3 +221,12 @@ class Config(BaseModel):
     def error_sound_path(self) -> Path:
         """Get full path to error sound"""
         return self.sounds_dir / self.error_sound
+
+    @property
+    def webhook_doorbell_event_set(self) -> set:
+        """Normalized set of webhook event types that should trigger a ring."""
+        return {
+            s.strip().lower()
+            for s in str(self.webhook_doorbell_events or '').split(',')
+            if s.strip()
+        }

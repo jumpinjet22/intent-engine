@@ -10,12 +10,14 @@ import os
 import json
 import signal
 import sys
+import threading
 
 import paho.mqtt.client as mqtt
 from dotenv import load_dotenv
 
 from intent_engine import DoorbellIntentEngine
 from config import Config
+from webhook_server import WebhookServer
 
 # Load environment variables
 load_dotenv()
@@ -35,6 +37,7 @@ class DoorbellService:
         self.mqtt_client = None
         self.running = False
         self.loop = None
+        self.webhook_thread = None
         
     async def initialize(self):
         """Initialize all components"""
@@ -58,6 +61,20 @@ class DoorbellService:
 
         # Give the engine access to MQTT for publishing intents/status
         self.engine.set_mqtt_client(self.mqtt_client)
+
+        if self.config.webhook_enabled:
+            self.webhook_thread = threading.Thread(
+                target=self._start_webhook_server,
+                name="webhook-server",
+                daemon=True,
+            )
+            self.webhook_thread.start()
+            logger.info(
+                "Webhook server listening on http://%s:%s%s",
+                self.config.webhook_host,
+                self.config.webhook_port,
+                self.config.webhook_path,
+            )
         
         logger.info("Initialization complete")
         
@@ -207,6 +224,10 @@ class DoorbellService:
             await self.engine.cleanup()
         
         logger.info("Shutdown complete")
+
+    def _start_webhook_server(self):
+        webhook = WebhookServer(self.config, self.engine, self.loop)
+        webhook.run()
 
 
 async def main():

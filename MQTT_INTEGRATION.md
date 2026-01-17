@@ -239,6 +239,45 @@ except KeyboardInterrupt:
     client.disconnect()
 ```
 
+## UniFi Protect Webhooks (Optional)
+
+If you want the G6 doorbell press to trigger the same flow without MQTT, enable the built-in webhook
+server and point UniFi Protect to it.
+
+### Environment Variables
+
+- `WEBHOOK_ENABLED=true`
+- `WEBHOOK_HOST=0.0.0.0`
+- `WEBHOOK_PORT=8088`
+- `WEBHOOK_PATH=/webhook/unifi`
+- `WEBHOOK_TOKEN=your-shared-secret` (optional)
+- `WEBHOOK_DOORBELL_EVENTS=doorbell,ring,doorbell_ring`
+
+### UniFi Webhook Payload
+
+The webhook expects JSON. These are common fields supported:
+
+```json
+{
+  "event": "doorbell",
+  "camera_id": "66d025b301ebc903e80003ea",
+  "camera_name": "Front Door Camera"
+}
+```
+
+### Human Acknowledgment Flow
+
+When you or a homeowner is on the way, call the human acknowledgment endpoint to announce it at
+the doorbell speaker.
+
+**Endpoint:** `POST /webhook/human-ack`
+
+```json
+{
+  "message": "The homeowner is on the way. One moment please."
+}
+```
+
 ## Using Web Dashboard
 
 ### Camera Selection
