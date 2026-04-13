@@ -1,4 +1,4 @@
-name: Docker Image CI
+name: Docker Compose CI
 
 on:
   push:
@@ -9,7 +9,18 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
-      - name: Build the Docker image
-        run: docker build . --file Dockerfile --tag my-image-name:$(date +%s)
+
+      - name: Show files
+        run: |
+          ls -la
+          find . -name "Dockerfile"
+          find . -name "docker-compose*.yml"
+
+      - name: Build intent-engine
+        run: docker compose -f docker-compose.min.yml build intent-engine
+
+      - name: Build web-ui
+        run: docker compose -f docker-compose.min.yml build web-ui
