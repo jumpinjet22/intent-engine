@@ -11,15 +11,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
+  build-intent-engine:
     runs-on: ubuntu-latest
-
-    strategy:
-      fail-fast: false
-      matrix:
-        service:
-          - intent-engine
-          - web-ui
 
     steps:
       - name: Check out repository
@@ -37,16 +30,43 @@ jobs:
           driver: cloud
           endpoint: jumpnjet22/fast-builder
 
-      - name: Show builder
-        run: docker buildx ls
-
-      - name: Build and push ${{ matrix.service }}
+      - name: Build and push intent-engine
         uses: docker/build-push-action@v6
         with:
-          context: ./${{ matrix.service }}
-          file: ./${{ matrix.service }}/Dockerfile
+          context: ./intent-engine
+          file: ./intent-engine/Dockerfile
+          platforms: linux/amd64
+          push: ${{ github.event_name == 'push' }}
+          tags: |
+            jumpnjet22/intent-engine:latest
+            jumpnjet22/intent-engine:${{ github.sha }}
+
+  build-web-ui:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Set up Docker Buildx with Docker Build Cloud
+        uses: docker/setup-buildx-action@v4
+        with:
+          driver: cloud
+          endpoint: jumpnjet22/fast-builder
+
+      - name: Build and push web-ui
+        uses: docker/build-push-action@v6
+        with:
+          context: ./web-ui
+          file: ./web-ui/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name == 'push' }}
           tags: |
-            jumpnjet22/${{ matrix.service }}:latest
-            jumpnjet22/${{ matrix.service }}:${{ github.sha }}
+            jumpnjet22/web-ui:latest
+            jumpnjet22/web-ui:${{ github.sha }}
