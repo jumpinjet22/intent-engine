@@ -1,9 +1,7 @@
-name: Docker Compose CI
+name: Build & Push Docker Images
 
 on:
   push:
-    branches: ["main"]
-  pull_request:
     branches: ["main"]
 
 jobs:
@@ -13,14 +11,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Show files
+      - name: Log in to Docker Hub
+        run: echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u ${{ secrets.DOCKER_USERNAME }} --password-stdin
+
+      - name: Build & push intent-engine
         run: |
-          ls -la
-          find . -name "Dockerfile"
-          find . -name "docker-compose*.yml"
+          docker build ./intent-engine -t jumpnjet22/intent-engine:latest
+          docker push jumpnjet22/intent-engine:latest
 
-      - name: Build intent-engine
-        run: docker compose -f docker-compose.min.yml build intent-engine
-
-      - name: Build web-ui
-        run: docker compose -f docker-compose.min.yml build web-ui
+      - name: Build & push web-ui
+        run: |
+          docker build ./web-ui -t jumpnjet22/web-ui:latest
+          docker push jumpnjet22/web-ui:latest
