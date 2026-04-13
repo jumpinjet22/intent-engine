@@ -3,7 +3,7 @@
 A complete AI-powered doorbell system using Frigate, UniFi G6 Entry, Ollama, and local TTS.
 ## 🤝 Contributing
 
-This project is still experimental and very much a work in progress. It works, but there are definitely rough edges and things that could be improved.
+This project is still experimental and very much a work in progress. It kinda works (like the web GUI works and thats about it), but there are definitely rough edges and things that could be improved.
 
 If you run into bugs, strange behavior, or have ideas for features or improvements, feel free to open an issue or submit a pull request.
 
