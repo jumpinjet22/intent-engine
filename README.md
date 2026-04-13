@@ -1,5 +1,5 @@
 # Doorbell Intent Engine - Docker Setup
-
+[![Build & Push Docker Images](https://github.com/jumpinjet22/intent-engine/actions/workflows/docker-image.yml/badge.svg)](https://github.com/jumpinjet22/intent-engine/actions/workflows/docker-image.yml)
 A complete AI-powered doorbell system using Frigate, UniFi G6 Entry, Ollama, and local TTS.
 ## 🤝 Contributing
 
