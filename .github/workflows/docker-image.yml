@@ -1,39 +1,52 @@
-name: Build & Push Multi-Service
+name: Build and Push Images
 
 on:
   push:
     branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+concurrency:
+  group: docker-build-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     strategy:
+      fail-fast: false
       matrix:
-        service: [intent-engine, web-ui]
+        service:
+          - intent-engine
+          - web-ui
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out repository
+        uses: actions/checkout@v4
 
-      # Enable multi-arch
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-
-      # Login to Docker Hub
-      - name: Login to Docker Hub
+      - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      # Build + Push
+      - name: Set up Docker Buildx with Docker Build Cloud
+        uses: docker/setup-buildx-action@v4
+        with:
+          driver: cloud
+          endpoint: jumpnjet22/fast-builder
+
+      - name: Show builder
+        run: docker buildx ls
+
       - name: Build and push ${{ matrix.service }}
         uses: docker/build-push-action@v6
         with:
           context: ./${{ matrix.service }}
           file: ./${{ matrix.service }}/Dockerfile
-          push: true
           platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name == 'push' }}
           tags: |
             jumpnjet22/${{ matrix.service }}:latest
             jumpnjet22/${{ matrix.service }}:${{ github.sha }}
