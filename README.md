@@ -1,7 +1,21 @@
 # Doorbell Intent Engine - Docker Setup
 
 A complete AI-powered doorbell system using Frigate, UniFi G6 Entry, Ollama, and local TTS.
+## 🤝 Contributing
 
+This project is still experimental and very much a work in progress. It works, but there are definitely rough edges and things that could be improved.
+
+If you run into bugs, strange behavior, or have ideas for features or improvements, feel free to open an issue or submit a pull request.
+
+Contributions of all kinds are welcome:
+- Bug fixes
+- Performance improvements
+- New features or integrations
+- Documentation cleanup (seriously, this helps a lot)
+
+If you enjoy taking something that mostly works and making it solid, you’ll fit right in.
+
+Let’s turn this from “it works on my machine” into something more reliable for everyone.
 ## Features
 
 - 🤖 **LLM-powered responses** using Ollama (Llama 3.2)
