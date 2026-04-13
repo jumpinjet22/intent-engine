@@ -1,13 +1,14 @@
 FROM nvidia/cuda:12.1.0-base-ubuntu22.04
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.11 \
     python3.11-venv \
-    python3-pip \
     ffmpeg \
     git \
     wget \
+    gnupg2 \
+    && apt-get install -y --only-upgrade gnupg2 \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
@@ -20,8 +21,11 @@ COPY requirements.txt .
 RUN python3.11 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-RUN pip install --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir -r requirements.txt
+RUN python -m pip install --no-cache-dir --upgrade \
+    pip \
+    "setuptools>=78.1.1" \
+    "wheel>=0.38.1" \
+ && pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY . .
