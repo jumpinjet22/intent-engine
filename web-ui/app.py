@@ -54,6 +54,14 @@ mqtt_connection_state = "disconnected"
 active_mqtt_config = {}
 
 
+def _new_mqtt_client():
+    """Create a client compatible with paho-mqtt v1 and v2+."""
+    callback_api = getattr(mqtt, "CallbackAPIVersion", None)
+    if callback_api is not None:
+        return mqtt.Client(callback_api_version=callback_api.VERSION2)
+    return mqtt.Client()
+
+
 def load_runtime() -> dict:
     try:
         p = Path(RUNTIME_CONFIG_PATH)
@@ -107,7 +115,7 @@ def is_first_run() -> bool:
     return False
 
 
-mqtt_client = mqtt.Client()
+mqtt_client = _new_mqtt_client()
 
 
 def on_mqtt_message(client, userdata, msg):
@@ -122,15 +130,11 @@ def on_mqtt_message(client, userdata, msg):
 
 mqtt_client.on_message = on_mqtt_message
 _effective_runtime = get_effective_runtime()
-mqtt_client.connect(_effective_runtime['mqtt_host'], int(_effective_runtime['mqtt_port']), 60)
-mqtt_client.subscribe(MQTT_TOPIC)
-mqtt_client.loop_start()
 active_mqtt_config = {
     'mqtt_host': _effective_runtime['mqtt_host'],
     'mqtt_port': int(_effective_runtime['mqtt_port']),
     'mqtt_topic': MQTT_TOPIC,
 }
-mqtt_connection_state = "connected"
 
 
 def normalize_mqtt_config(runtime: dict) -> dict:
@@ -190,7 +194,7 @@ def reconnect_mqtt_client(runtime: dict | None = None) -> tuple[bool, str | None
                 except Exception:
                     pass
 
-            new_client = mqtt.Client()
+            new_client = _new_mqtt_client()
             new_client.on_message = on_mqtt_message
             new_client.connect(cfg['mqtt_host'], int(cfg['mqtt_port']), 60)
             new_client.subscribe(cfg['mqtt_topic'])
@@ -250,7 +254,7 @@ def test_setup_connection():
     if errors:
         return jsonify({'ok': False, 'errors': errors}), 400
 
-    test_client = mqtt.Client()
+    test_client = _new_mqtt_client()
     try:
         test_client.connect(payload['mqtt_host'].strip(), int(payload['mqtt_port']), 10)
         test_client.disconnect()

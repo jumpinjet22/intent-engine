@@ -17,7 +17,8 @@ class AuthenticatedMQTTClient:
     def __init__(self, config: Config):
         self.config = config
         self.client = mqtt.Client(client_id=config.resolved_client_id, clean_session=True)
-        self.client.username_pw_set(config.mqtt_username, config.mqtt_password)
+        if config.mqtt_username or config.mqtt_password:
+            self.client.username_pw_set(config.mqtt_username, config.mqtt_password)
         if config.mqtt_tls_enabled:
             self.client.tls_set(ca_certs=config.mqtt_tls_ca_cert or None)
         self.client.on_connect = self._on_connect
