@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 from datetime import datetime
 from collections import deque
+import threading
 import requests
 
 app = Flask(__name__)
@@ -37,6 +38,14 @@ PROTECT_BASE_URL = os.getenv('PROTECT_BASE_URL', '')
 PROTECT_API_KEY = os.getenv('PROTECT_API_KEY', '')
 PROTECT_VERIFY_SSL = os.getenv('PROTECT_VERIFY_SSL', 'false').lower() == 'true'
 
+mqtt_client = None
+mqtt_lock = threading.Lock()
+active_mqtt_config = {
+    'mqtt_host': MQTT_HOST,
+    'mqtt_port': MQTT_PORT,
+    'mqtt_topic': MQTT_TOPIC,
+}
+
 
 def load_runtime() -> dict:
     try:
@@ -53,43 +62,163 @@ def save_runtime(data: dict) -> None:
     p = Path(RUNTIME_CONFIG_PATH)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(data, indent=2, sort_keys=True), encoding='utf-8')
-mqtt_client = mqtt.Client()
+
+
+def normalize_mqtt_config(runtime: dict | None = None) -> dict:
+    rt = runtime if isinstance(runtime, dict) else load_runtime()
+    raw_port = rt.get('mqtt_port', MQTT_PORT)
+    try:
+        port = int(raw_port)
+    except (TypeError, ValueError):
+        port = MQTT_PORT
+    return {
+        'mqtt_host': (rt.get('mqtt_host') or MQTT_HOST).strip(),
+        'mqtt_port': port,
+        'mqtt_topic': (rt.get('mqtt_topic') or MQTT_TOPIC).strip(),
+    }
+
+
+def setup_needed(runtime: dict) -> tuple[bool, list[str]]:
+    reasons = []
+    if not (runtime.get('mqtt_host') or '').strip():
+        reasons.append('mqtt_host is required')
+
+    try:
+        port = int(runtime.get('mqtt_port'))
+        if port < 1 or port > 65535:
+            reasons.append('mqtt_port must be between 1 and 65535')
+    except (TypeError, ValueError):
+        reasons.append('mqtt_port is required')
+
+    if not (runtime.get('mqtt_topic') or '').strip():
+        reasons.append('mqtt_topic is required')
+
+    if not (runtime.get('frigate_camera') or '').strip():
+        reasons.append('frigate_camera is required')
+
+    return bool(reasons), reasons
+
+
+def validate_setup_payload(payload: dict, require_camera: bool) -> dict:
+    errors = {}
+    host = (payload.get('mqtt_host') or '').strip()
+    topic = (payload.get('mqtt_topic') or '').strip()
+    camera = (payload.get('frigate_camera') or '').strip()
+
+    if not host:
+        errors['mqtt_host'] = 'MQTT host is required.'
+
+    try:
+        port = int(payload.get('mqtt_port'))
+        if port < 1 or port > 65535:
+            errors['mqtt_port'] = 'MQTT port must be 1-65535.'
+    except (TypeError, ValueError):
+        errors['mqtt_port'] = 'MQTT port must be a valid number.'
+
+    if not topic:
+        errors['mqtt_topic'] = 'MQTT topic is required.'
+
+    if require_camera and not camera:
+        errors['frigate_camera'] = 'Please select a Frigate camera.'
+
+    return errors
+
 
 def on_mqtt_message(client, userdata, msg):
-    """Handle MQTT messages"""
+    """Handle MQTT messages."""
     try:
         event = json.loads(msg.payload.decode())
         event['timestamp'] = datetime.now().isoformat()
         recent_events.append(event)
-    except:
+    except Exception:
         pass
 
-mqtt_client.on_message = on_mqtt_message
-mqtt_client.connect(MQTT_HOST, MQTT_PORT, 60)
-mqtt_client.subscribe(MQTT_TOPIC)
-mqtt_client.loop_start()
+
+def reconnect_mqtt_client(config: dict | None = None) -> tuple[bool, str | None]:
+    """Reconnect MQTT client using latest runtime or provided config."""
+    global mqtt_client
+    global active_mqtt_config
+
+    cfg = normalize_mqtt_config(config if config is not None else load_runtime())
+    new_client = mqtt.Client()
+    new_client.on_message = on_mqtt_message
+
+    try:
+        new_client.connect(cfg['mqtt_host'], int(cfg['mqtt_port']), 60)
+        new_client.subscribe(cfg['mqtt_topic'])
+        new_client.loop_start()
+    except Exception as exc:
+        try:
+            new_client.loop_stop()
+        except Exception:
+            pass
+        return False, str(exc)
+
+    with mqtt_lock:
+        old_client = mqtt_client
+        mqtt_client = new_client
+        active_mqtt_config = cfg
+
+    if old_client:
+        try:
+            old_client.loop_stop()
+            old_client.disconnect()
+        except Exception:
+            pass
+
+    return True, None
+
 
 @app.route('/')
 def index():
-    """Main dashboard"""
+    """Main dashboard."""
     return render_template('index.html')
 
 
 @app.route('/api/events')
 def get_events():
-    """Get recent events"""
-    return jsonify({
-        'events': list(recent_events)
-    })
+    """Get recent events."""
+    return jsonify({'events': list(recent_events)})
+
 
 @app.route('/api/status')
 def get_status():
-    """Get system status"""
+    """Get system status."""
+    client = mqtt_client
     return jsonify({
         'status': 'running',
-        'mqtt_connected': mqtt_client.is_connected(),
-        'recent_events': len(recent_events)
+        'mqtt_connected': client.is_connected() if client else False,
+        'recent_events': len(recent_events),
+        'mqtt': active_mqtt_config,
     })
+
+
+@app.route('/api/setup/status')
+def get_setup_status():
+    runtime = load_runtime()
+    needs_setup, reasons = setup_needed(runtime)
+    return jsonify({
+        'needs_setup': needs_setup,
+        'reasons': reasons,
+        'runtime': runtime,
+        'effective_mqtt': normalize_mqtt_config(runtime),
+    })
+
+
+@app.route('/api/setup/test', methods=['POST'])
+def test_setup_connection():
+    payload = request.get_json(force=True) or {}
+    errors = validate_setup_payload(payload, require_camera=False)
+    if errors:
+        return jsonify({'ok': False, 'errors': errors}), 400
+
+    test_client = mqtt.Client()
+    try:
+        test_client.connect(payload['mqtt_host'].strip(), int(payload['mqtt_port']), 10)
+        test_client.disconnect()
+        return jsonify({'ok': True, 'message': 'Connected to MQTT broker successfully.'})
+    except Exception as exc:
+        return jsonify({'ok': False, 'message': f'Connection failed: {exc}'}), 400
 
 
 @app.route('/api/runtime', methods=['GET', 'POST'])
@@ -102,14 +231,52 @@ def runtime_config():
         current = load_runtime()
 
         # Whitelist fields the UI is allowed to change
-        for k in ['frigate_camera', 'protect_camera_id', 'camera_rtsp_url']:
-            if k in payload:
-                current[k] = payload[k]
+        for key in [
+            'mqtt_host',
+            'mqtt_port',
+            'mqtt_topic',
+            'frigate_camera',
+            'protect_camera_id',
+            'camera_rtsp_url',
+        ]:
+            if key in payload:
+                current[key] = payload[key]
 
         save_runtime(current)
-        return jsonify({'ok': True, 'runtime': current})
-    except Exception as e:
-        return jsonify({'ok': False, 'error': str(e)}), 500
+        mqtt_error = None
+        if any(k in payload for k in ['mqtt_host', 'mqtt_port', 'mqtt_topic']):
+            _, mqtt_error = reconnect_mqtt_client(current)
+
+        return jsonify({'ok': mqtt_error is None, 'runtime': current, 'mqtt_error': mqtt_error})
+    except Exception as exc:
+        return jsonify({'ok': False, 'error': str(exc)}), 500
+
+
+@app.route('/api/setup', methods=['POST'])
+def setup_config():
+    payload = request.get_json(force=True) or {}
+    errors = validate_setup_payload(payload, require_camera=True)
+    if errors:
+        return jsonify({'ok': False, 'errors': errors}), 400
+
+    current = load_runtime()
+    for key in [
+        'mqtt_host',
+        'mqtt_port',
+        'mqtt_topic',
+        'frigate_camera',
+        'protect_camera_id',
+        'camera_rtsp_url',
+    ]:
+        if key in payload:
+            current[key] = payload[key]
+
+    save_runtime(current)
+    ok, error = reconnect_mqtt_client(current)
+    if not ok:
+        return jsonify({'ok': False, 'error': f'Saved setup, but MQTT reconnect failed: {error}'}), 502
+
+    return jsonify({'ok': True, 'runtime': current, 'message': 'Setup saved and MQTT reconnected.'})
 
 
 @app.route('/api/frigate/cameras')
@@ -119,10 +286,10 @@ def frigate_cameras():
         if FRIGATE_API_KEY:
             headers['Authorization'] = f'Bearer {FRIGATE_API_KEY}'
         url = f"http://{FRIGATE_HOST}:{FRIGATE_PORT}/api/config"
-        r = requests.get(url, headers=headers, timeout=8)
-        if r.status_code != 200:
+        response = requests.get(url, headers=headers, timeout=8)
+        if response.status_code != 200:
             return jsonify({'cameras': []})
-        cfg = r.json() if r.content else {}
+        cfg = response.json() if response.content else {}
         cams = sorted((cfg.get('cameras') or {}).keys())
         return jsonify({'cameras': cams})
     except Exception:
@@ -134,19 +301,21 @@ def protect_cameras():
     if not PROTECT_BASE_URL or not PROTECT_API_KEY:
         return jsonify({'cameras': []})
     try:
-        s = requests.Session()
-        s.headers.update({'Authorization': f'Bearer {PROTECT_API_KEY}'})
-        r = s.get(PROTECT_BASE_URL.rstrip('/') + '/cameras', verify=PROTECT_VERIFY_SSL, timeout=8)
-        if r.status_code != 200:
+        session = requests.Session()
+        session.headers.update({'Authorization': f'Bearer {PROTECT_API_KEY}'})
+        response = session.get(PROTECT_BASE_URL.rstrip('/') + '/cameras', verify=PROTECT_VERIFY_SSL, timeout=8)
+        if response.status_code != 200:
             return jsonify({'cameras': []})
-        items = r.json() if r.content else []
+        items = response.json() if response.content else []
         cams = []
-        for c in items if isinstance(items, list) else []:
-            cams.append({'id': c.get('id', ''), 'name': c.get('name', c.get('type', 'camera'))})
-        cams = [c for c in cams if c.get('id')]
+        for camera in items if isinstance(items, list) else []:
+            cams.append({'id': camera.get('id', ''), 'name': camera.get('name', camera.get('type', 'camera'))})
+        cams = [camera for camera in cams if camera.get('id')]
         return jsonify({'cameras': cams})
     except Exception:
         return jsonify({'cameras': []})
 
+
 if __name__ == '__main__':
+    reconnect_mqtt_client()
     app.run(host='0.0.0.0', port=8080, debug=False)
