@@ -68,13 +68,13 @@ class Config(BaseModel):
 
     @model_validator(mode="after")
     def _validate_required(self) -> "Config":
-        missing = []
-        if not self.mqtt_username:
-            missing.append("MQTT_USERNAME")
-        if not self.mqtt_password:
-            missing.append("MQTT_PASSWORD")
-        if missing:
-            raise ValueError(f"Missing required MQTT credentials: {', '.join(missing)}")
+        # Credentials are optional for brokers configured for anonymous access.
+        # If either value is provided, require both to avoid partial auth config.
+        if bool(self.mqtt_username) != bool(self.mqtt_password):
+            raise ValueError(
+                "MQTT credentials must include both MQTT_USERNAME and MQTT_PASSWORD, "
+                "or leave both unset for anonymous brokers."
+            )
         return self
 
     @property
