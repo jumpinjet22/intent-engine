@@ -142,15 +142,17 @@ def get_events():
     return jsonify({'events': list(recent_events)})
 
 
+
 @app.route('/api/status')
 def get_status():
     """Get system status."""
     client = mqtt_client
     return jsonify({
         'status': 'running',
-        'mqtt_connected': client.is_connected() if client else False,
-        'recent_events': len(recent_events),
-        'mqtt': active_mqtt_config,
+        'mqtt_connected': mqtt_client.is_connected(),
+        'mqtt_connection_state': mqtt_connection_state,
+        'mqtt_config': current_mqtt_config,
+        'recent_events': len(recent_events)
     })
 
 
@@ -191,17 +193,12 @@ def runtime_config():
         payload = request.get_json(force=True) or {}
         current = load_runtime()
 
-        # Whitelist fields the UI is allowed to change
-        for key in [
-            'mqtt_host',
-            'mqtt_port',
-            'mqtt_topic',
-            'frigate_camera',
-            'protect_camera_id',
-            'camera_rtsp_url',
-        ]:
-            if key in payload:
-                current[key] = payload[key]
+        # Whitelist fields the UI is allowed to change (runtime source of truth)
+        for k in RUNTIME_EDITABLE_FIELDS:
+            if k in payload:
+                if current.get(k) != payload[k] and k in {'mqtt_host', 'mqtt_port', 'mqtt_topic'}:
+                    changed_mqtt = True
+                current[k] = payload[k]
 
         if 'mqtt_port' in current:
             current['mqtt_port'] = int(current['mqtt_port'])
