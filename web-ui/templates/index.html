@@ -58,6 +58,24 @@
       <label for="camera_rtsp_url">RTSP/RTSPS URL override (optional)</label>
       <input id="camera_rtsp_url" placeholder="rtsps://... (leave blank to use Protect discovery)" />
 
+      <h3>API Endpoints & Keys (optional)</h3>
+      <div class="small">Set these here if you prefer not to manage them only through environment variables.</div>
+
+      <label for="frigate_host">Frigate API host</label>
+      <input id="frigate_host" placeholder="frigate or 192.168.x.x" />
+
+      <label for="frigate_port">Frigate API port</label>
+      <input id="frigate_port" type="number" min="1" max="65535" placeholder="5000" />
+
+      <label for="frigate_api_key">Frigate API key</label>
+      <input id="frigate_api_key" type="password" placeholder="Bearer token (optional)" />
+
+      <label for="protect_base_url">UniFi Protect base URL</label>
+      <input id="protect_base_url" placeholder="https://192.168.x.x/proxy/protect/api" />
+
+      <label for="protect_api_key">UniFi Protect API key</label>
+      <input id="protect_api_key" type="password" placeholder="Protect API key (optional)" />
+
       <div>
         <button class="test" onclick="testConnection()">Test MQTT connection</button>
         <button class="save" onclick="saveSetup()">Finish setup</button>
