@@ -64,7 +64,7 @@ A complete, production-ready Docker stack for an AI-powered doorbell system usin
 doorbell-intent-engine/
 ├── docker-compose.yml          # Main orchestration
 ├── .env.example               # Configuration template
-├── setup.sh                   # Automated setup script
+├── setup.sh                   # Legacy helper script (prompts include older vars)
 ├── README.md                  # Complete documentation
 ├── QUICKSTART.md             # 5-minute getting started
 │
@@ -136,9 +136,9 @@ ENABLE_VOICE_CLONING=false  # Custom voice
 cp .env.example .env
 nano .env  # Add your UniFi Protect credentials
 
-# 2. Run setup
-chmod +x setup.sh
-./setup.sh
+# 2. Pull model once
+docker-compose up ollama -d
+docker exec -it doorbell-ollama ollama pull llama3.2:3b
 
 # 3. Start
 docker-compose up -d
@@ -146,6 +146,20 @@ docker-compose up -d
 # 4. Monitor
 docker-compose logs -f intent-engine
 ```
+
+### Legacy script note
+
+`setup.sh` is still available, but its prompts include legacy environment variables. The primary
+flow is to start from `.env.example`, then validate current required keys before bringing services up.
+
+If `setup.sh` is used anyway, re-check:
+- `UNIFI_PROTECT_HOST`
+- `UNIFI_PROTECT_TOKEN`
+- `CAMERA_ID`
+- `MQTT_HOST`
+- `MQTT_PORT`
+- `MQTT_USERNAME`
+- `MQTT_PASSWORD`
 
 ### Test It
 Ring your doorbell, wait for "Hello!", then speak:
@@ -333,7 +347,7 @@ docker run --rm --gpus all nvidia/cuda:12.1.0-base-ubuntu22.04 nvidia-smi
 - ✅ Web monitoring UI
 
 ### Scripts
-- ✅ setup.sh - Automated installation
+- ✅ setup.sh - Legacy setup helper (backward compatibility)
 - ✅ All dependencies listed
 
 ## What Makes This Special

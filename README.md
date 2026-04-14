@@ -59,6 +59,9 @@ nano .env
 
 **Required settings:**
 ```bash
+UNIFI_PROTECT_HOST=https://192.168.1.XXX
+UNIFI_PROTECT_TOKEN=your_token_here
+CAMERA_ID=your_camera_id_here
 MQTT_HOST=localhost
 MQTT_PORT=1883
 MQTT_USERNAME=doorbell
@@ -119,6 +122,20 @@ docker-compose pull intent-engine
 # View logs
 docker-compose logs -f intent-engine
 ```
+
+### Legacy script note
+
+`setup.sh` remains in the repo for backwards compatibility, but its interactive prompts still include
+legacy variables. For current installs, use `.env.example` + `.env` as the primary setup path.
+
+If you choose to run `setup.sh`, verify these keys in `.env` afterwards:
+- `UNIFI_PROTECT_HOST`
+- `UNIFI_PROTECT_TOKEN`
+- `CAMERA_ID`
+- `MQTT_HOST`
+- `MQTT_PORT`
+- `MQTT_USERNAME`
+- `MQTT_PASSWORD`
 
 ## Configuration
 

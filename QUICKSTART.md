@@ -42,26 +42,45 @@ nano .env
 UNIFI_PROTECT_HOST=https://192.168.1.XXX
 UNIFI_PROTECT_TOKEN=your_token_here
 CAMERA_ID=your_camera_id_here
+MQTT_HOST=localhost
+MQTT_PORT=1883
+MQTT_USERNAME=doorbell
+MQTT_PASSWORD=changeme
 ```
 
-### 4. Run Setup Script
+### 4. Pull model and preflight manually (recommended)
 
 ```bash
-chmod +x setup.sh
-./setup.sh
+# Pull Llama model once (first run only)
+docker-compose up ollama -d
+docker exec -it doorbell-ollama ollama pull llama3.2:3b
+
+# Optional: verify env values before boot
+grep -E '^(UNIFI_PROTECT_HOST|UNIFI_PROTECT_TOKEN|CAMERA_ID|MQTT_HOST|MQTT_PORT|MQTT_USERNAME|MQTT_PASSWORD)=' .env
 ```
 
-This will:
-- ✅ Check prerequisites
-- ✅ Pull Docker images
-- ✅ Download Llama 3.2 3B model
-- ✅ Set everything up
+This keeps setup aligned with the current `.env` flow and avoids outdated prompts.
 
 ### 5. Start the System
 
 ```bash
 docker-compose up -d
 ```
+
+### Legacy script note
+
+`setup.sh` is still available, but some prompts include legacy variables and can be confusing for newer setups.
+
+If you still use it:
+- Treat `.env.example` as the source of truth
+- Re-check these keys in `.env` after the script runs:
+  - `UNIFI_PROTECT_HOST`
+  - `UNIFI_PROTECT_TOKEN`
+  - `CAMERA_ID`
+  - `MQTT_HOST`
+  - `MQTT_PORT`
+  - `MQTT_USERNAME`
+  - `MQTT_PASSWORD`
 
 ### 6. Test It!
 
