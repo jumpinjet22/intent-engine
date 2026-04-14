@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import signal
 import sys
 from datetime import datetime, timezone
@@ -15,6 +16,7 @@ from dialogue import DialogueManager
 from intent import IntentClassifier
 from mqtt import AuthenticatedMQTTClient
 from state_machine import SessionState, StateMachine
+from runtime_config import apply_runtime_to_env, load_runtime_config
 from talkback import TalkbackDriver
 
 
@@ -243,6 +245,10 @@ def _request_id() -> str:
 
 
 def main() -> None:
+    runtime_config_path = os.getenv("RUNTIME_CONFIG_PATH", "/data/runtime.json")
+    runtime = load_runtime_config(runtime_config_path)
+    apply_runtime_to_env(runtime)
+
     try:
         config = Config()
     except ValueError as exc:
