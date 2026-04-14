@@ -9,6 +9,11 @@ function setupPayload() {
     frigate_camera: document.getElementById('frigate_camera').value,
     protect_camera_id: document.getElementById('protect_camera_id').value,
     camera_rtsp_url: document.getElementById('camera_rtsp_url').value.trim(),
+    frigate_host: document.getElementById('frigate_host').value.trim(),
+    frigate_port: Number(document.getElementById('frigate_port').value),
+    frigate_api_key: document.getElementById('frigate_api_key').value.trim(),
+    protect_base_url: document.getElementById('protect_base_url').value.trim(),
+    protect_api_key: document.getElementById('protect_api_key').value.trim(),
   };
 }
 
@@ -79,6 +84,11 @@ async function loadSetup() {
   document.getElementById('mqtt_host').value = runtime.mqtt_host || effective.mqtt_host || '';
   document.getElementById('mqtt_port').value = runtime.mqtt_port || effective.mqtt_port || 1883;
   document.getElementById('mqtt_topic').value = runtime.mqtt_topic || effective.mqtt_topic || '';
+  document.getElementById('frigate_host').value = runtime.frigate_host || '';
+  document.getElementById('frigate_port').value = runtime.frigate_port || 5000;
+  document.getElementById('frigate_api_key').value = runtime.frigate_api_key || '';
+  document.getElementById('protect_base_url').value = runtime.protect_base_url || '';
+  document.getElementById('protect_api_key').value = runtime.protect_api_key || '';
 
   const setupScreen = document.getElementById('setup-screen');
   const main = document.getElementById('main-content');

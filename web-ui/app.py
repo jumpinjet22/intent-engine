@@ -31,6 +31,11 @@ EDITABLE_DEFAULTS = {
     'frigate_camera': os.getenv('FRIGATE_CAMERA', ''),
     'protect_camera_id': os.getenv('PROTECT_CAMERA_ID', ''),
     'camera_rtsp_url': os.getenv('CAMERA_RTSP_URL', ''),
+    'frigate_host': os.getenv('FRIGATE_HOST', 'frigate'),
+    'frigate_port': int(os.getenv('FRIGATE_PORT', '5000')),
+    'frigate_api_key': os.getenv('FRIGATE_API_KEY', ''),
+    'protect_base_url': os.getenv('PROTECT_BASE_URL', ''),
+    'protect_api_key': os.getenv('PROTECT_API_KEY', ''),
 }
 
 RUNTIME_EDITABLE_FIELDS = set(EDITABLE_DEFAULTS.keys())
@@ -39,13 +44,6 @@ REQUIRED_RUNTIME_KEYS = {'mqtt_host', 'mqtt_port', 'frigate_camera'}
 # MQTT topic remains infra-level env configuration
 MQTT_TOPIC = os.getenv('MQTT_TOPIC', 'frigate/events')
 
-# Frigate / Protect infra credentials and hosts
-FRIGATE_HOST = os.getenv('FRIGATE_HOST', 'frigate')
-FRIGATE_PORT = int(os.getenv('FRIGATE_PORT', '5000'))
-FRIGATE_API_KEY = os.getenv('FRIGATE_API_KEY', '')
-
-PROTECT_BASE_URL = os.getenv('PROTECT_BASE_URL', '')
-PROTECT_API_KEY = os.getenv('PROTECT_API_KEY', '')
 PROTECT_VERIFY_SSL = os.getenv('PROTECT_VERIFY_SSL', 'false').lower() == 'true'
 
 mqtt_client = None
@@ -146,6 +144,28 @@ def normalize_mqtt_config(runtime: dict) -> dict:
         'mqtt_host': str(effective.get('mqtt_host', '')).strip(),
         'mqtt_port': int(effective.get('mqtt_port', 1883)),
         'mqtt_topic': MQTT_TOPIC,
+    }
+
+
+def normalize_service_config(runtime: dict) -> dict:
+    effective = dict(EDITABLE_DEFAULTS)
+    for key in RUNTIME_EDITABLE_FIELDS:
+        if key in runtime:
+            effective[key] = runtime[key]
+
+    try:
+        frigate_port = int(effective.get('frigate_port', 5000))
+        if frigate_port <= 0:
+            frigate_port = 5000
+    except Exception:
+        frigate_port = 5000
+
+    return {
+        'frigate_host': str(effective.get('frigate_host', '')).strip(),
+        'frigate_port': frigate_port,
+        'frigate_api_key': str(effective.get('frigate_api_key', '')).strip(),
+        'protect_base_url': str(effective.get('protect_base_url', '')).strip(),
+        'protect_api_key': str(effective.get('protect_api_key', '')).strip(),
     }
 
 
@@ -308,9 +328,21 @@ def setup_config():
         'frigate_camera',
         'protect_camera_id',
         'camera_rtsp_url',
+        'frigate_host',
+        'frigate_port',
+        'frigate_api_key',
+        'protect_base_url',
+        'protect_api_key',
     ]:
         if key in payload:
             current[key] = payload[key]
+
+    if 'frigate_port' in current:
+        try:
+            frigate_port = int(current['frigate_port'])
+            current['frigate_port'] = frigate_port if frigate_port > 0 else 5000
+        except Exception:
+            current['frigate_port'] = 5000
 
     save_runtime(current)
     ok, error = reconnect_mqtt_client(current)
@@ -323,10 +355,11 @@ def setup_config():
 @app.route('/api/frigate/cameras')
 def frigate_cameras():
     try:
+        cfg = normalize_service_config(load_runtime())
         headers = {}
-        if FRIGATE_API_KEY:
-            headers['Authorization'] = f'Bearer {FRIGATE_API_KEY}'
-        url = f"http://{FRIGATE_HOST}:{FRIGATE_PORT}/api/config"
+        if cfg['frigate_api_key']:
+            headers['Authorization'] = f"Bearer {cfg['frigate_api_key']}"
+        url = f"http://{cfg['frigate_host']}:{cfg['frigate_port']}/api/config"
         response = requests.get(url, headers=headers, timeout=8)
         if response.status_code != 200:
             return jsonify({'cameras': []})
@@ -339,12 +372,13 @@ def frigate_cameras():
 
 @app.route('/api/protect/cameras')
 def protect_cameras():
-    if not PROTECT_BASE_URL or not PROTECT_API_KEY:
+    cfg = normalize_service_config(load_runtime())
+    if not cfg['protect_base_url'] or not cfg['protect_api_key']:
         return jsonify({'cameras': []})
     try:
         session = requests.Session()
-        session.headers.update({'Authorization': f'Bearer {PROTECT_API_KEY}'})
-        response = session.get(PROTECT_BASE_URL.rstrip('/') + '/cameras', verify=PROTECT_VERIFY_SSL, timeout=8)
+        session.headers.update({'Authorization': f"Bearer {cfg['protect_api_key']}"})
+        response = session.get(cfg['protect_base_url'].rstrip('/') + '/cameras', verify=PROTECT_VERIFY_SSL, timeout=8)
         if response.status_code != 200:
             return jsonify({'cameras': []})
         items = response.json() if response.content else []
