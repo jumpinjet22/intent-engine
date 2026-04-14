@@ -109,16 +109,29 @@ Or the system will generate a quick "Hello!" using TTS.
 docker-compose up ollama -d
 docker exec -it doorbell-ollama ollama pull llama3.2:3b
 
-# Start everything
+# Start everything except web-ui (intent-engine, mqtt, ollama)
 docker-compose up -d
 
-# Optional: pull a prebuilt intent-engine image
-# Set INTENT_ENGINE_IMAGE in .env to the published image name, then:
-docker-compose pull intent-engine
+# Web UI path A (local development build from ./web-ui)
+docker compose up -d --build web-ui
+
+# Web UI path B (prebuilt image from WEB_UI_IMAGE)
+WEB_UI_IMAGE=jumpnjet22/web-ui:latest docker compose pull web-ui && \
+WEB_UI_IMAGE=jumpnjet22/web-ui:latest docker compose up -d web-ui
 
 # View logs
 docker-compose logs -f intent-engine
 ```
+
+`web-ui` in both `docker-compose.yml` and `docker-compose.min.yml` defines **both** `build` and
+`image`. Runtime behavior is:
+
+- `docker compose up web-ui` uses an existing local image tag (or pulls the `image` tag if missing).
+- `docker compose up --build web-ui` forces a rebuild from `./web-ui` and tags it as `WEB_UI_IMAGE`
+  (or `jumpnjet22/web-ui:latest` when `WEB_UI_IMAGE` is unset).
+
+Use `--build` when you are actively changing files in `./web-ui`; use `WEB_UI_IMAGE` + `pull` when
+you want a published prebuilt image.
 
 ## Configuration
 
@@ -188,6 +201,35 @@ See `.env.example` for topic overrides.【F:.env.example†L1-L26】
 The intent engine requires `MQTT_USERNAME` and `MQTT_PASSWORD` on startup. If you use the bundled
 Mosquitto container, create a password file and disable anonymous access in `mosquitto.conf` before
 starting the stack.【F:mosquitto/config/mosquitto.conf†L1-L5】
+
+### Web UI image/build mode
+
+The `web-ui` service is intentionally configured the same way in both compose files:
+
+- `docker-compose.yml`
+- `docker-compose.min.yml`
+
+Each has both:
+
+- `build: ./web-ui`
+- `image: ${WEB_UI_IMAGE:-jumpnjet22/web-ui:latest}`
+
+Pick one workflow:
+
+1. **Local development build (recommended when editing UI code):**
+
+   ```bash
+   docker compose up -d --build web-ui
+   ```
+
+2. **Prebuilt image workflow (recommended for stable deployments):**
+
+   ```bash
+   WEB_UI_IMAGE=jumpnjet22/web-ui:latest docker compose pull web-ui && WEB_UI_IMAGE=jumpnjet22/web-ui:latest docker compose up -d web-ui
+   ```
+
+If you do not pass `--build`, Compose will not force a rebuild of `./web-ui`; it will run the image
+tag resolved by `WEB_UI_IMAGE` (pulling it if needed).
 
 ## Architecture
 
