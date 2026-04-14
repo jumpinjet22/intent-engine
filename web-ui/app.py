@@ -50,11 +50,8 @@ PROTECT_VERIFY_SSL = os.getenv('PROTECT_VERIFY_SSL', 'false').lower() == 'true'
 
 mqtt_client = None
 mqtt_lock = threading.Lock()
-active_mqtt_config = {
-    'mqtt_host': MQTT_HOST,
-    'mqtt_port': MQTT_PORT,
-    'mqtt_topic': MQTT_TOPIC,
-}
+mqtt_connection_state = "disconnected"
+active_mqtt_config = {}
 
 
 def load_runtime() -> dict:
@@ -128,6 +125,85 @@ _effective_runtime = get_effective_runtime()
 mqtt_client.connect(_effective_runtime['mqtt_host'], int(_effective_runtime['mqtt_port']), 60)
 mqtt_client.subscribe(MQTT_TOPIC)
 mqtt_client.loop_start()
+active_mqtt_config = {
+    'mqtt_host': _effective_runtime['mqtt_host'],
+    'mqtt_port': int(_effective_runtime['mqtt_port']),
+    'mqtt_topic': MQTT_TOPIC,
+}
+mqtt_connection_state = "connected"
+
+
+def normalize_mqtt_config(runtime: dict) -> dict:
+    effective = dict(EDITABLE_DEFAULTS)
+    for key in RUNTIME_EDITABLE_FIELDS:
+        if key in runtime:
+            effective[key] = runtime[key]
+    return {
+        'mqtt_host': str(effective.get('mqtt_host', '')).strip(),
+        'mqtt_port': int(effective.get('mqtt_port', 1883)),
+        'mqtt_topic': MQTT_TOPIC,
+    }
+
+
+def setup_needed(runtime: dict) -> tuple[bool, list[str]]:
+    reasons = []
+    if not str(runtime.get('mqtt_host', '')).strip():
+        reasons.append('mqtt_host')
+    try:
+        port = int(runtime.get('mqtt_port', 0))
+        if port <= 0:
+            reasons.append('mqtt_port')
+    except Exception:
+        reasons.append('mqtt_port')
+    if not str(runtime.get('frigate_camera', '')).strip():
+        reasons.append('frigate_camera')
+    return (len(reasons) > 0, reasons)
+
+
+def validate_setup_payload(payload: dict, require_camera: bool = True) -> list[str]:
+    errors = []
+    host = str(payload.get('mqtt_host', '')).strip()
+    if not host:
+        errors.append('mqtt_host is required')
+    try:
+        port = int(payload.get('mqtt_port'))
+        if port <= 0:
+            errors.append('mqtt_port must be > 0')
+    except Exception:
+        errors.append('mqtt_port must be a valid integer')
+    if require_camera and not str(payload.get('frigate_camera', '')).strip():
+        errors.append('frigate_camera is required')
+    return errors
+
+
+def reconnect_mqtt_client(runtime: dict | None = None) -> tuple[bool, str | None]:
+    global mqtt_client, mqtt_connection_state, active_mqtt_config
+    target_runtime = runtime or load_runtime()
+    cfg = normalize_mqtt_config(target_runtime)
+
+    with mqtt_lock:
+        try:
+            if mqtt_client is not None:
+                try:
+                    mqtt_client.loop_stop()
+                    mqtt_client.disconnect()
+                except Exception:
+                    pass
+
+            new_client = mqtt.Client()
+            new_client.on_message = on_mqtt_message
+            new_client.connect(cfg['mqtt_host'], int(cfg['mqtt_port']), 60)
+            new_client.subscribe(cfg['mqtt_topic'])
+            new_client.loop_start()
+
+            mqtt_client = new_client
+            active_mqtt_config = cfg
+            mqtt_connection_state = "connected"
+            return True, None
+        except Exception as exc:
+            mqtt_connection_state = "error"
+            active_mqtt_config = cfg
+            return False, str(exc)
 
 
 @app.route('/')
@@ -146,12 +222,11 @@ def get_events():
 @app.route('/api/status')
 def get_status():
     """Get system status."""
-    client = mqtt_client
     return jsonify({
         'status': 'running',
         'mqtt_connected': mqtt_client.is_connected(),
         'mqtt_connection_state': mqtt_connection_state,
-        'mqtt_config': current_mqtt_config,
+        'mqtt_config': active_mqtt_config,
         'recent_events': len(recent_events)
     })
 
@@ -192,6 +267,7 @@ def runtime_config():
     try:
         payload = request.get_json(force=True) or {}
         current = load_runtime()
+        changed_mqtt = False
 
         # Whitelist fields the UI is allowed to change (runtime source of truth)
         for k in RUNTIME_EDITABLE_FIELDS:
@@ -205,7 +281,7 @@ def runtime_config():
 
         save_runtime(current)
         mqtt_error = None
-        if any(k in payload for k in ['mqtt_host', 'mqtt_port', 'mqtt_topic']):
+        if changed_mqtt:
             _, mqtt_error = reconnect_mqtt_client(current)
 
         return jsonify({'ok': mqtt_error is None, 'runtime': current, 'mqtt_error': mqtt_error})
@@ -278,5 +354,5 @@ def protect_cameras():
 
 
 if __name__ == '__main__':
-    reconnect_mqtt_client()
+    reconnect_mqtt_client(load_runtime())
     app.run(host='0.0.0.0', port=8080, debug=False)
