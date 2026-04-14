@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 from datetime import datetime
 from collections import deque
+import threading
 import requests
 
 app = Flask(__name__)
@@ -46,6 +47,14 @@ FRIGATE_API_KEY = os.getenv('FRIGATE_API_KEY', '')
 PROTECT_BASE_URL = os.getenv('PROTECT_BASE_URL', '')
 PROTECT_API_KEY = os.getenv('PROTECT_API_KEY', '')
 PROTECT_VERIFY_SSL = os.getenv('PROTECT_VERIFY_SSL', 'false').lower() == 'true'
+
+mqtt_client = None
+mqtt_lock = threading.Lock()
+active_mqtt_config = {
+    'mqtt_host': MQTT_HOST,
+    'mqtt_port': MQTT_PORT,
+    'mqtt_topic': MQTT_TOPIC,
+}
 
 
 def load_runtime() -> dict:
@@ -123,7 +132,7 @@ mqtt_client.loop_start()
 
 @app.route('/')
 def index():
-    """Main dashboard"""
+    """Main dashboard."""
     return render_template('index.html')
 
 
@@ -136,7 +145,8 @@ def get_events():
 
 @app.route('/api/status')
 def get_status():
-    """Get system status"""
+    """Get system status."""
+    client = mqtt_client
     return jsonify({
         'status': 'running',
         'mqtt_connected': mqtt_client.is_connected(),
@@ -147,8 +157,31 @@ def get_status():
 
 
 @app.route('/api/setup/status')
-def setup_status():
-    return jsonify({'needs_setup': is_first_run()})
+def get_setup_status():
+    runtime = load_runtime()
+    needs_setup, reasons = setup_needed(runtime)
+    return jsonify({
+        'needs_setup': needs_setup,
+        'reasons': reasons,
+        'runtime': runtime,
+        'effective_mqtt': normalize_mqtt_config(runtime),
+    })
+
+
+@app.route('/api/setup/test', methods=['POST'])
+def test_setup_connection():
+    payload = request.get_json(force=True) or {}
+    errors = validate_setup_payload(payload, require_camera=False)
+    if errors:
+        return jsonify({'ok': False, 'errors': errors}), 400
+
+    test_client = mqtt.Client()
+    try:
+        test_client.connect(payload['mqtt_host'].strip(), int(payload['mqtt_port']), 10)
+        test_client.disconnect()
+        return jsonify({'ok': True, 'message': 'Connected to MQTT broker successfully.'})
+    except Exception as exc:
+        return jsonify({'ok': False, 'message': f'Connection failed: {exc}'}), 400
 
 
 @app.route('/api/runtime', methods=['GET', 'POST'])
@@ -171,9 +204,40 @@ def runtime_config():
             current['mqtt_port'] = int(current['mqtt_port'])
 
         save_runtime(current)
-        return jsonify({'ok': True, 'runtime': get_effective_runtime(), 'needs_setup': is_first_run()})
-    except Exception as e:
-        return jsonify({'ok': False, 'error': str(e)}), 500
+        mqtt_error = None
+        if any(k in payload for k in ['mqtt_host', 'mqtt_port', 'mqtt_topic']):
+            _, mqtt_error = reconnect_mqtt_client(current)
+
+        return jsonify({'ok': mqtt_error is None, 'runtime': current, 'mqtt_error': mqtt_error})
+    except Exception as exc:
+        return jsonify({'ok': False, 'error': str(exc)}), 500
+
+
+@app.route('/api/setup', methods=['POST'])
+def setup_config():
+    payload = request.get_json(force=True) or {}
+    errors = validate_setup_payload(payload, require_camera=True)
+    if errors:
+        return jsonify({'ok': False, 'errors': errors}), 400
+
+    current = load_runtime()
+    for key in [
+        'mqtt_host',
+        'mqtt_port',
+        'mqtt_topic',
+        'frigate_camera',
+        'protect_camera_id',
+        'camera_rtsp_url',
+    ]:
+        if key in payload:
+            current[key] = payload[key]
+
+    save_runtime(current)
+    ok, error = reconnect_mqtt_client(current)
+    if not ok:
+        return jsonify({'ok': False, 'error': f'Saved setup, but MQTT reconnect failed: {error}'}), 502
+
+    return jsonify({'ok': True, 'runtime': current, 'message': 'Setup saved and MQTT reconnected.'})
 
 
 @app.route('/api/frigate/cameras')
@@ -183,10 +247,10 @@ def frigate_cameras():
         if FRIGATE_API_KEY:
             headers['Authorization'] = f'Bearer {FRIGATE_API_KEY}'
         url = f"http://{FRIGATE_HOST}:{FRIGATE_PORT}/api/config"
-        r = requests.get(url, headers=headers, timeout=8)
-        if r.status_code != 200:
+        response = requests.get(url, headers=headers, timeout=8)
+        if response.status_code != 200:
             return jsonify({'cameras': []})
-        cfg = r.json() if r.content else {}
+        cfg = response.json() if response.content else {}
         cams = sorted((cfg.get('cameras') or {}).keys())
         return jsonify({'cameras': cams})
     except Exception:
@@ -198,20 +262,21 @@ def protect_cameras():
     if not PROTECT_BASE_URL or not PROTECT_API_KEY:
         return jsonify({'cameras': []})
     try:
-        s = requests.Session()
-        s.headers.update({'Authorization': f'Bearer {PROTECT_API_KEY}'})
-        r = s.get(PROTECT_BASE_URL.rstrip('/') + '/cameras', verify=PROTECT_VERIFY_SSL, timeout=8)
-        if r.status_code != 200:
+        session = requests.Session()
+        session.headers.update({'Authorization': f'Bearer {PROTECT_API_KEY}'})
+        response = session.get(PROTECT_BASE_URL.rstrip('/') + '/cameras', verify=PROTECT_VERIFY_SSL, timeout=8)
+        if response.status_code != 200:
             return jsonify({'cameras': []})
-        items = r.json() if r.content else []
+        items = response.json() if response.content else []
         cams = []
-        for c in items if isinstance(items, list) else []:
-            cams.append({'id': c.get('id', ''), 'name': c.get('name', c.get('type', 'camera'))})
-        cams = [c for c in cams if c.get('id')]
+        for camera in items if isinstance(items, list) else []:
+            cams.append({'id': camera.get('id', ''), 'name': camera.get('name', camera.get('type', 'camera'))})
+        cams = [camera for camera in cams if camera.get('id')]
         return jsonify({'cameras': cams})
     except Exception:
         return jsonify({'cameras': []})
 
 
 if __name__ == '__main__':
+    reconnect_mqtt_client()
     app.run(host='0.0.0.0', port=8080, debug=False)
