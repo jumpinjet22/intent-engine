@@ -5,10 +5,11 @@
 ### 1. Prerequisites
 - ✅ NVIDIA GPU (RTX 2060 Super or better)
 - ✅ Docker & Docker Compose installed
-- ✅ UniFi G6 Entry doorbell
-- ✅ Frigate NVR running
+- ✅ MQTT broker with valid username/password credentials
+- ✅ (Optional) UniFi Protect / G6 Entry doorbell integration
+- ✅ (Optional) Frigate NVR integration
 
-### 2. Get Your Credentials
+### 2. (Optional) Get UniFi Protect Credentials
 
 **UniFi Protect API Token:**
 ```
@@ -39,9 +40,23 @@ nano .env
 
 **Minimum required:**
 ```bash
+MQTT_HOST=localhost
+MQTT_PORT=1883
+MQTT_USERNAME=doorbell
+MQTT_PASSWORD=changeme
+```
+
+> **Important:** `MQTT_USERNAME` and `MQTT_PASSWORD` cannot be empty. The intent engine fails startup validation if either value is blank.
+
+**Optional integrations (not required for minimum boot):**
+```bash
+# UniFi Protect / doorbell integration
 UNIFI_PROTECT_HOST=https://192.168.1.XXX
 UNIFI_PROTECT_TOKEN=your_token_here
 CAMERA_ID=your_camera_id_here
+
+# Frigate integration
+FRIGATE_HOST=http://192.168.1.XXX:5000
 ```
 
 ### 4. Run Setup Script
@@ -131,8 +146,14 @@ watch -n 1 nvidia-smi
 
 ## Common First-Time Issues
 
-### Issue: "UNIFI_PROTECT_TOKEN is required"
-**Fix:** Make sure you created and copied the .env file with your credentials
+### Issue: "Missing required MQTT credentials: MQTT_USERNAME"
+**Fix:** Set a non-empty value for `MQTT_USERNAME` in `.env`.
+
+### Issue: "Missing required MQTT credentials: MQTT_PASSWORD"
+**Fix:** Set a non-empty value for `MQTT_PASSWORD` in `.env`.
+
+### Issue: "Missing required MQTT credentials: MQTT_USERNAME, MQTT_PASSWORD"
+**Fix:** Set both `MQTT_USERNAME` and `MQTT_PASSWORD` in `.env` (empty strings are treated as missing).
 
 ### Issue: "CUDA error: out of memory"
 **Fix:** Use a smaller model:
@@ -153,6 +174,8 @@ WHISPER_MODEL=tiny
 1. Make sure Frigate is configured to detect people
 2. Set up a zone called "entry" or "door" in Frigate
 3. Check MQTT connection: `docker-compose logs mqtt`
+
+> **Note:** Frigate is optional for minimum startup. If you're only validating a basic boot, you can skip Frigate event wiring until later.
 
 ## Performance Tips
 
