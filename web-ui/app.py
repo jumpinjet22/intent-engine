@@ -1,7 +1,7 @@
 """Simple web UI for monitoring doorbell events + runtime setup.
 
-Infra stays in env vars (hosts/keys). The UI saves camera selection (and optional RTSP URL)
-to /data/runtime.json so you don't have to redeploy to switch cameras.
+Infra stays in env vars (hosts/keys). The UI saves user-editable setup values
+to /data/runtime.json so you don't have to redeploy to change settings.
 """
 
 from flask import Flask, jsonify, request, render_template
@@ -24,12 +24,22 @@ recent_events = deque(maxlen=50)
 # Runtime config path (shared volume with intent-engine)
 RUNTIME_CONFIG_PATH = os.getenv('RUNTIME_CONFIG_PATH', '/data/runtime.json')
 
-# MQTT configuration
-MQTT_HOST = os.getenv('MQTT_HOST', 'localhost')
-MQTT_PORT = int(os.getenv('MQTT_PORT', '1883'))
+# Defaults from env/.env (runtime.json overrides these for user-editable fields)
+EDITABLE_DEFAULTS = {
+    'mqtt_host': os.getenv('MQTT_HOST', 'localhost'),
+    'mqtt_port': int(os.getenv('MQTT_PORT', '1883')),
+    'frigate_camera': os.getenv('FRIGATE_CAMERA', ''),
+    'protect_camera_id': os.getenv('PROTECT_CAMERA_ID', ''),
+    'camera_rtsp_url': os.getenv('CAMERA_RTSP_URL', ''),
+}
+
+RUNTIME_EDITABLE_FIELDS = set(EDITABLE_DEFAULTS.keys())
+REQUIRED_RUNTIME_KEYS = {'mqtt_host', 'mqtt_port', 'frigate_camera'}
+
+# MQTT topic remains infra-level env configuration
 MQTT_TOPIC = os.getenv('MQTT_TOPIC', 'frigate/events')
 
-# Frigate / Protect (hosts/keys in env; UI chooses camera)
+# Frigate / Protect infra credentials and hosts
 FRIGATE_HOST = os.getenv('FRIGATE_HOST', 'frigate')
 FRIGATE_PORT = int(os.getenv('FRIGATE_PORT', '5000'))
 FRIGATE_API_KEY = os.getenv('FRIGATE_API_KEY', '')
@@ -64,64 +74,43 @@ def save_runtime(data: dict) -> None:
     p.write_text(json.dumps(data, indent=2, sort_keys=True), encoding='utf-8')
 
 
-def normalize_mqtt_config(runtime: dict | None = None) -> dict:
-    rt = runtime if isinstance(runtime, dict) else load_runtime()
-    raw_port = rt.get('mqtt_port', MQTT_PORT)
-    try:
-        port = int(raw_port)
-    except (TypeError, ValueError):
-        port = MQTT_PORT
-    return {
-        'mqtt_host': (rt.get('mqtt_host') or MQTT_HOST).strip(),
-        'mqtt_port': port,
-        'mqtt_topic': (rt.get('mqtt_topic') or MQTT_TOPIC).strip(),
-    }
+def get_effective_runtime() -> dict:
+    """Merge order: env defaults first, runtime.json overrides for editable fields."""
+    effective = dict(EDITABLE_DEFAULTS)
+    runtime = load_runtime()
+
+    for key in RUNTIME_EDITABLE_FIELDS:
+        if key in runtime:
+            effective[key] = runtime[key]
+
+    return effective
 
 
-def setup_needed(runtime: dict) -> tuple[bool, list[str]]:
-    reasons = []
-    if not (runtime.get('mqtt_host') or '').strip():
-        reasons.append('mqtt_host is required')
+def is_first_run() -> bool:
+    """True when runtime.json is missing required setup keys/values."""
+    runtime = load_runtime()
+
+    for key in REQUIRED_RUNTIME_KEYS:
+        if key not in runtime:
+            return True
+
+    if not str(runtime.get('mqtt_host', '')).strip():
+        return True
 
     try:
         port = int(runtime.get('mqtt_port'))
-        if port < 1 or port > 65535:
-            reasons.append('mqtt_port must be between 1 and 65535')
-    except (TypeError, ValueError):
-        reasons.append('mqtt_port is required')
+        if port <= 0:
+            return True
+    except Exception:
+        return True
 
-    if not (runtime.get('mqtt_topic') or '').strip():
-        reasons.append('mqtt_topic is required')
+    if not str(runtime.get('frigate_camera', '')).strip():
+        return True
 
-    if not (runtime.get('frigate_camera') or '').strip():
-        reasons.append('frigate_camera is required')
-
-    return bool(reasons), reasons
+    return False
 
 
-def validate_setup_payload(payload: dict, require_camera: bool) -> dict:
-    errors = {}
-    host = (payload.get('mqtt_host') or '').strip()
-    topic = (payload.get('mqtt_topic') or '').strip()
-    camera = (payload.get('frigate_camera') or '').strip()
-
-    if not host:
-        errors['mqtt_host'] = 'MQTT host is required.'
-
-    try:
-        port = int(payload.get('mqtt_port'))
-        if port < 1 or port > 65535:
-            errors['mqtt_port'] = 'MQTT port must be 1-65535.'
-    except (TypeError, ValueError):
-        errors['mqtt_port'] = 'MQTT port must be a valid number.'
-
-    if not topic:
-        errors['mqtt_topic'] = 'MQTT topic is required.'
-
-    if require_camera and not camera:
-        errors['frigate_camera'] = 'Please select a Frigate camera.'
-
-    return errors
+mqtt_client = mqtt.Client()
 
 
 def on_mqtt_message(client, userdata, msg):
@@ -134,39 +123,11 @@ def on_mqtt_message(client, userdata, msg):
         pass
 
 
-def reconnect_mqtt_client(config: dict | None = None) -> tuple[bool, str | None]:
-    """Reconnect MQTT client using latest runtime or provided config."""
-    global mqtt_client
-    global active_mqtt_config
-
-    cfg = normalize_mqtt_config(config if config is not None else load_runtime())
-    new_client = mqtt.Client()
-    new_client.on_message = on_mqtt_message
-
-    try:
-        new_client.connect(cfg['mqtt_host'], int(cfg['mqtt_port']), 60)
-        new_client.subscribe(cfg['mqtt_topic'])
-        new_client.loop_start()
-    except Exception as exc:
-        try:
-            new_client.loop_stop()
-        except Exception:
-            pass
-        return False, str(exc)
-
-    with mqtt_lock:
-        old_client = mqtt_client
-        mqtt_client = new_client
-        active_mqtt_config = cfg
-
-    if old_client:
-        try:
-            old_client.loop_stop()
-            old_client.disconnect()
-        except Exception:
-            pass
-
-    return True, None
+mqtt_client.on_message = on_mqtt_message
+_effective_runtime = get_effective_runtime()
+mqtt_client.connect(_effective_runtime['mqtt_host'], int(_effective_runtime['mqtt_port']), 60)
+mqtt_client.subscribe(MQTT_TOPIC)
+mqtt_client.loop_start()
 
 
 @app.route('/')
@@ -177,7 +138,7 @@ def index():
 
 @app.route('/api/events')
 def get_events():
-    """Get recent events."""
+    """Get recent events"""
     return jsonify({'events': list(recent_events)})
 
 
@@ -224,7 +185,7 @@ def test_setup_connection():
 @app.route('/api/runtime', methods=['GET', 'POST'])
 def runtime_config():
     if request.method == 'GET':
-        return jsonify({'runtime': load_runtime()})
+        return jsonify({'runtime': get_effective_runtime(), 'needs_setup': is_first_run()})
 
     try:
         payload = request.get_json(force=True) or {}
@@ -241,6 +202,9 @@ def runtime_config():
         ]:
             if key in payload:
                 current[key] = payload[key]
+
+        if 'mqtt_port' in current:
+            current['mqtt_port'] = int(current['mqtt_port'])
 
         save_runtime(current)
         mqtt_error = None
