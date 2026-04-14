@@ -2,8 +2,7 @@ version: '3.8'
 
 services:
   intent-engine:
-    build: ./intent-engine
-    image: ${INTENT_ENGINE_IMAGE:-doorbell-intent-engine:latest}
+    image: ${INTENT_ENGINE_IMAGE:-jumpnjet22/intent-engine:latest}
     container_name: doorbell-intent-engine
     environment:
       - OLLAMA_HOST=${OLLAMA_HOST:-http://ollama:11434}
@@ -45,7 +44,7 @@ services:
 
   # Optional debug dashboard
   web-ui:
-    build: ./web-ui
+    image: ${WEB_UI_IMAGE:-jumpnjet22/web-ui:latest}
     container_name: doorbell-web-ui
     ports:
       - "8080:8080"
