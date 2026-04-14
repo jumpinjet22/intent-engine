@@ -105,7 +105,7 @@ mqtt_client = mqtt.Client()
 
 
 def on_mqtt_message(client, userdata, msg):
-    """Handle MQTT messages"""
+    """Handle MQTT messages."""
     try:
         event = json.loads(msg.payload.decode())
         event['timestamp'] = datetime.now().isoformat()
@@ -133,12 +133,15 @@ def get_events():
     return jsonify({'events': list(recent_events)})
 
 
+
 @app.route('/api/status')
 def get_status():
     """Get system status"""
     return jsonify({
         'status': 'running',
         'mqtt_connected': mqtt_client.is_connected(),
+        'mqtt_connection_state': mqtt_connection_state,
+        'mqtt_config': current_mqtt_config,
         'recent_events': len(recent_events)
     })
 
@@ -160,6 +163,8 @@ def runtime_config():
         # Whitelist fields the UI is allowed to change (runtime source of truth)
         for k in RUNTIME_EDITABLE_FIELDS:
             if k in payload:
+                if current.get(k) != payload[k] and k in {'mqtt_host', 'mqtt_port', 'mqtt_topic'}:
+                    changed_mqtt = True
                 current[k] = payload[k]
 
         if 'mqtt_port' in current:
