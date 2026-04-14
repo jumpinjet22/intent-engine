@@ -112,9 +112,12 @@ services:
   # Web UI for monitoring and configuration (optional)
   web-ui:
     image: ${WEB_UI_IMAGE:-jumpnjet22/web-ui:latest}
+    build:
+      context: ./web-ui
+      dockerfile: Dockerfile
     container_name: doorbell-web-ui
     ports:
-      - "8080:8080"
+      - "${WEB_UI_PORT:-8080}:8080"
     depends_on:
       - intent-engine
       - mqtt
