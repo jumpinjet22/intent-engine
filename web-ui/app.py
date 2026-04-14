@@ -23,7 +23,7 @@ recent_events = deque(maxlen=50)
 # Runtime config path (shared volume with intent-engine)
 RUNTIME_CONFIG_PATH = os.getenv('RUNTIME_CONFIG_PATH', '/data/runtime.json')
 
-# MQTT configuration
+# MQTT configuration defaults
 MQTT_HOST = os.getenv('MQTT_HOST', 'localhost')
 MQTT_PORT = int(os.getenv('MQTT_PORT', '1883'))
 MQTT_TOPIC = os.getenv('MQTT_TOPIC', 'frigate/events')
@@ -53,21 +53,89 @@ def save_runtime(data: dict) -> None:
     p = Path(RUNTIME_CONFIG_PATH)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(data, indent=2, sort_keys=True), encoding='utf-8')
-mqtt_client = mqtt.Client()
+
+
+def mqtt_config_from_runtime(runtime: dict | None = None) -> dict:
+    rt = runtime if isinstance(runtime, dict) else load_runtime()
+    return {
+        'host': rt.get('mqtt_host', MQTT_HOST),
+        'port': int(rt.get('mqtt_port', MQTT_PORT)),
+        'topic': rt.get('mqtt_topic', MQTT_TOPIC),
+    }
+
 
 def on_mqtt_message(client, userdata, msg):
-    """Handle MQTT messages"""
+    """Handle MQTT messages."""
     try:
         event = json.loads(msg.payload.decode())
         event['timestamp'] = datetime.now().isoformat()
         recent_events.append(event)
-    except:
+    except Exception:
         pass
 
-mqtt_client.on_message = on_mqtt_message
-mqtt_client.connect(MQTT_HOST, MQTT_PORT, 60)
-mqtt_client.subscribe(MQTT_TOPIC)
-mqtt_client.loop_start()
+
+def on_mqtt_connect(client, userdata, flags, reason_code, properties=None):
+    global mqtt_connection_state
+    if reason_code == 0:
+        mqtt_connection_state = 'connected'
+        client.subscribe(current_mqtt_config['topic'])
+    else:
+        mqtt_connection_state = f'connect_failed:{reason_code}'
+
+
+def on_mqtt_disconnect(client, userdata, flags, reason_code, properties=None):
+    global mqtt_connection_state
+    if reason_code == 0:
+        mqtt_connection_state = 'disconnected'
+    else:
+        mqtt_connection_state = f'disconnected:{reason_code}'
+
+
+def build_mqtt_client(config):
+    client = mqtt.Client()
+    client.on_message = on_mqtt_message
+    client.on_connect = on_mqtt_connect
+    client.on_disconnect = on_mqtt_disconnect
+    return client
+
+
+def connect_mqtt():
+    global mqtt_connection_state
+    mqtt_connection_state = 'connecting'
+    mqtt_client.connect(current_mqtt_config['host'], current_mqtt_config['port'], 60)
+    mqtt_client.loop_start()
+
+
+def reconnect_mqtt(new_config):
+    global mqtt_client, current_mqtt_config, mqtt_connection_state
+
+    mqtt_connection_state = 'reconnecting'
+
+    try:
+        mqtt_client.loop_stop()
+    except Exception:
+        pass
+
+    try:
+        mqtt_client.disconnect()
+    except Exception:
+        pass
+
+    current_mqtt_config = {
+        'host': new_config['host'],
+        'port': int(new_config['port']),
+        'topic': new_config['topic'],
+    }
+
+    mqtt_client = build_mqtt_client(current_mqtt_config)
+    connect_mqtt()
+
+
+current_mqtt_config = mqtt_config_from_runtime()
+mqtt_connection_state = 'initialized'
+mqtt_client = build_mqtt_client(current_mqtt_config)
+connect_mqtt()
+
 
 @app.route('/')
 def index():
@@ -82,12 +150,15 @@ def get_events():
         'events': list(recent_events)
     })
 
+
 @app.route('/api/status')
 def get_status():
     """Get system status"""
     return jsonify({
         'status': 'running',
         'mqtt_connected': mqtt_client.is_connected(),
+        'mqtt_connection_state': mqtt_connection_state,
+        'mqtt_config': current_mqtt_config,
         'recent_events': len(recent_events)
     })
 
@@ -102,12 +173,19 @@ def runtime_config():
         current = load_runtime()
 
         # Whitelist fields the UI is allowed to change
-        for k in ['frigate_camera', 'protect_camera_id', 'camera_rtsp_url']:
+        changed_mqtt = False
+        for k in ['frigate_camera', 'protect_camera_id', 'camera_rtsp_url', 'mqtt_host', 'mqtt_port', 'mqtt_topic']:
             if k in payload:
+                if current.get(k) != payload[k] and k in {'mqtt_host', 'mqtt_port', 'mqtt_topic'}:
+                    changed_mqtt = True
                 current[k] = payload[k]
 
         save_runtime(current)
-        return jsonify({'ok': True, 'runtime': current})
+
+        if changed_mqtt:
+            reconnect_mqtt(mqtt_config_from_runtime(current))
+
+        return jsonify({'ok': True, 'runtime': current, 'mqtt_reconnected': changed_mqtt})
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)}), 500
 
@@ -147,6 +225,7 @@ def protect_cameras():
         return jsonify({'cameras': cams})
     except Exception:
         return jsonify({'cameras': []})
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080, debug=False)
