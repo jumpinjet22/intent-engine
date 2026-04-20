@@ -1,213 +1,330 @@
-let lastTestedConfigKey = null;
-let lastTestPassed = false;
+const AppState = {
+  lastTestedConfigKey: null,
+  lastTestPassed: false,
+  eventsRefreshHandle: null,
+  statusRefreshHandle: null,
+};
 
-function setupPayload() {
-  return {
-    mqtt_host: document.getElementById('mqtt_host').value.trim(),
-    mqtt_port: Number(document.getElementById('mqtt_port').value),
-    mqtt_topic: document.getElementById('mqtt_topic').value.trim(),
-    frigate_camera: document.getElementById('frigate_camera').value,
-    protect_camera_id: document.getElementById('protect_camera_id').value,
-    camera_rtsp_url: document.getElementById('camera_rtsp_url').value.trim(),
-    frigate_host: document.getElementById('frigate_host').value.trim(),
-    frigate_port: Number(document.getElementById('frigate_port').value),
-    frigate_api_key: document.getElementById('frigate_api_key').value.trim(),
-    protect_base_url: document.getElementById('protect_base_url').value.trim(),
-    protect_api_key: document.getElementById('protect_api_key').value.trim(),
-  };
-}
+const $ = (id) => document.getElementById(id);
 
-function clearErrors() {
-  ['mqtt_host', 'mqtt_port', 'mqtt_topic', 'frigate_camera'].forEach((field) => {
-    const node = document.getElementById(`err_${field}`);
-    if (node) node.textContent = '';
-  });
-}
+const Toasts = {
+  container: null,
 
-function setStatus(message, ok) {
-  const status = document.getElementById('setup-status');
-  status.classList.remove('hidden', 'status-ok', 'status-bad');
-  status.classList.add(ok ? 'status-ok' : 'status-bad');
-  status.textContent = message;
-}
+  init() {
+    this.container = $('toast-region');
+  },
 
-function validateForm() {
-  clearErrors();
-  const body = setupPayload();
-  const errors = {};
+  show(message, kind = 'ok', timeoutMs = 3200) {
+    if (!this.container) return;
+    const toast = document.createElement('div');
+    toast.className = `toast ${kind}`;
+    toast.textContent = message;
+    this.container.appendChild(toast);
 
-  if (!body.mqtt_host) errors.mqtt_host = 'MQTT host is required.';
-  if (!Number.isInteger(body.mqtt_port) || body.mqtt_port < 1 || body.mqtt_port > 65535) {
-    errors.mqtt_port = 'MQTT port must be 1-65535.';
-  }
-  if (!body.mqtt_topic) errors.mqtt_topic = 'MQTT topic is required.';
-  if (!body.frigate_camera) errors.frigate_camera = 'Please select a Frigate camera.';
+    window.setTimeout(() => {
+      toast.remove();
+    }, timeoutMs);
+  },
+};
 
-  Object.entries(errors).forEach(([field, message]) => {
-    const node = document.getElementById(`err_${field}`);
-    if (node) node.textContent = message;
-  });
+const Theme = {
+  init() {
+    const toggle = $('theme-toggle');
+    const persisted = localStorage.getItem('theme');
+    if (persisted === 'light' || persisted === 'dark') {
+      document.documentElement.dataset.theme = persisted;
+    }
 
-  return { valid: Object.keys(errors).length === 0, body };
-}
+    toggle.addEventListener('click', () => {
+      const current = document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+      const next = current === 'dark' ? 'light' : 'dark';
+      document.documentElement.dataset.theme = next;
+      localStorage.setItem('theme', next);
+    });
+  },
+};
 
-function mqttKey(body) {
-  return `${body.mqtt_host}:${body.mqtt_port}/${body.mqtt_topic}`;
-}
+const SetupForm = {
+  setupStatus: null,
 
-async function loadSetup() {
-  const [status, rt, frig, prot] = await Promise.all([
-    fetch('/api/setup/status').then((r) => r.json()),
-    fetch('/api/runtime').then((r) => r.json()),
-    fetch('/api/frigate/cameras').then((r) => r.json()),
-    fetch('/api/protect/cameras').then((r) => r.json()),
-  ]);
+  init() {
+    this.setupStatus = $('setup-status');
+    $('test-connection').addEventListener('click', () => this.testConnection());
+    $('save-setup').addEventListener('click', () => this.saveSetup());
+  },
 
-  const runtime = rt.runtime || {};
-  const effective = status.effective_mqtt || {};
+  payload() {
+    return {
+      mqtt_host: $('mqtt_host').value.trim(),
+      mqtt_port: Number($('mqtt_port').value),
+      mqtt_topic: $('mqtt_topic').value.trim(),
+      frigate_camera: $('frigate_camera').value,
+      protect_camera_id: $('protect_camera_id').value,
+      camera_rtsp_url: $('camera_rtsp_url').value.trim(),
+      frigate_host: $('frigate_host').value.trim(),
+      frigate_port: Number($('frigate_port').value),
+      frigate_api_key: $('frigate_api_key').value.trim(),
+      protect_base_url: $('protect_base_url').value.trim(),
+      protect_api_key: $('protect_api_key').value.trim(),
+    };
+  },
 
-  const frigSel = document.getElementById('frigate_camera');
-  const frigCams = (frig.cameras || []);
-  frigSel.innerHTML = frigCams.length
-    ? frigCams.map((c) => `<option value="${c}">${c}</option>`).join('')
-    : '<option value="">(no cameras found)</option>';
-  frigSel.value = runtime.frigate_camera || '';
+  mqttKey(body) {
+    return `${body.mqtt_host}:${body.mqtt_port}/${body.mqtt_topic}`;
+  },
 
-  const protSel = document.getElementById('protect_camera_id');
-  const protCams = (prot.cameras || []);
-  protSel.innerHTML = protCams.length
-    ? protCams.map((c) => `<option value="${c.id}">${c.name} (${c.id})</option>`).join('')
-    : '<option value="">(Protect not configured)</option>';
-  protSel.value = runtime.protect_camera_id || '';
+  clearErrors() {
+    ['mqtt_host', 'mqtt_port', 'mqtt_topic', 'frigate_camera'].forEach((field) => {
+      const node = $(`err_${field}`);
+      if (node) node.textContent = '';
+    });
+  },
 
-  document.getElementById('camera_rtsp_url').value = runtime.camera_rtsp_url || '';
-  document.getElementById('mqtt_host').value = runtime.mqtt_host || effective.mqtt_host || '';
-  document.getElementById('mqtt_port').value = runtime.mqtt_port || effective.mqtt_port || 1883;
-  document.getElementById('mqtt_topic').value = runtime.mqtt_topic || effective.mqtt_topic || '';
-  document.getElementById('frigate_host').value = runtime.frigate_host || '';
-  document.getElementById('frigate_port').value = runtime.frigate_port || 5000;
-  document.getElementById('frigate_api_key').value = runtime.frigate_api_key || '';
-  document.getElementById('protect_base_url').value = runtime.protect_base_url || '';
-  document.getElementById('protect_api_key').value = runtime.protect_api_key || '';
+  setStatus(message, ok) {
+    this.setupStatus.classList.remove('hidden', 'status-ok', 'status-bad');
+    this.setupStatus.classList.add(ok ? 'status-ok' : 'status-bad');
+    this.setupStatus.textContent = message;
+  },
 
-  const setupScreen = document.getElementById('setup-screen');
-  const main = document.getElementById('main-content');
-  if (status.needs_setup) {
-    setupScreen.classList.remove('hidden');
-    main.classList.add('hidden');
-    document.getElementById('setup-reasons').textContent =
-      status.reasons && status.reasons.length
+  validate() {
+    this.clearErrors();
+    const body = this.payload();
+    const errors = {};
+
+    if (!body.mqtt_host) errors.mqtt_host = 'MQTT host is required.';
+    if (!Number.isInteger(body.mqtt_port) || body.mqtt_port < 1 || body.mqtt_port > 65535) {
+      errors.mqtt_port = 'MQTT port must be 1-65535.';
+    }
+    if (!body.mqtt_topic) errors.mqtt_topic = 'MQTT topic is required.';
+    if (!body.frigate_camera) errors.frigate_camera = 'Please select a Frigate camera.';
+
+    Object.entries(errors).forEach(([field, message]) => {
+      const node = $(`err_${field}`);
+      if (node) node.textContent = message;
+    });
+
+    return { valid: Object.keys(errors).length === 0, body };
+  },
+
+  async hydrate() {
+    const [status, runtimeRes, frigateRes, protectRes] = await Promise.all([
+      fetch('/api/setup/status').then((r) => r.json()),
+      fetch('/api/runtime').then((r) => r.json()),
+      fetch('/api/frigate/cameras').then((r) => r.json()),
+      fetch('/api/protect/cameras').then((r) => r.json()),
+    ]);
+
+    const runtime = runtimeRes.runtime || {};
+    const effective = status.effective_mqtt || {};
+
+    const frigateCameras = frigateRes.cameras || [];
+    $('frigate_camera').innerHTML = frigateCameras.length
+      ? frigateCameras.map((camera) => `<option value="${camera}">${camera}</option>`).join('')
+      : '<option value="">(no cameras found)</option>';
+
+    const protectCameras = protectRes.cameras || [];
+    $('protect_camera_id').innerHTML = protectCameras.length
+      ? protectCameras.map((camera) => `<option value="${camera.id}">${camera.name} (${camera.id})</option>`).join('')
+      : '<option value="">(Protect not configured)</option>';
+
+    $('frigate_camera').value = runtime.frigate_camera || '';
+    $('protect_camera_id').value = runtime.protect_camera_id || '';
+    $('camera_rtsp_url').value = runtime.camera_rtsp_url || '';
+    $('mqtt_host').value = runtime.mqtt_host || effective.mqtt_host || '';
+    $('mqtt_port').value = runtime.mqtt_port || effective.mqtt_port || 1883;
+    $('mqtt_topic').value = runtime.mqtt_topic || effective.mqtt_topic || '';
+    $('frigate_host').value = runtime.frigate_host || '';
+    $('frigate_port').value = runtime.frigate_port || 5000;
+    $('frigate_api_key').value = runtime.frigate_api_key || '';
+    $('protect_base_url').value = runtime.protect_base_url || '';
+    $('protect_api_key').value = runtime.protect_api_key || '';
+
+    if (status.needs_setup) {
+      $('setup-screen').classList.remove('hidden');
+      $('main-content').classList.add('hidden');
+      $('setup-reasons').textContent = status.reasons?.length
         ? `Setup required: ${status.reasons.join('; ')}`
         : 'Setup required.';
-  } else {
-    setupScreen.classList.add('hidden');
-    main.classList.remove('hidden');
-  }
-}
-
-async function testConnection() {
-  const { valid, body } = validateForm();
-  if (!valid) {
-    setStatus('Fix validation errors before testing connection.', false);
-    return;
-  }
-
-  const res = await fetch('/api/setup/test', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-
-  const out = await res.json();
-  if (out.ok) {
-    lastTestedConfigKey = mqttKey(body);
-    lastTestPassed = true;
-    setStatus(out.message || 'MQTT connection test passed.', true);
-  } else {
-    lastTestPassed = false;
-    setStatus(out.message || 'MQTT connection test failed.', false);
-  }
-}
-
-async function saveSetup() {
-  const { valid, body } = validateForm();
-  if (!valid) {
-    setStatus('Please fix inline validation errors.', false);
-    return;
-  }
-
-  if (!lastTestPassed || lastTestedConfigKey !== mqttKey(body)) {
-    setStatus('Please run a successful MQTT connection test before finishing setup.', false);
-    return;
-  }
-
-  const res = await fetch('/api/setup', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-
-  const out = await res.json();
-  if (!out.ok) {
-    if (out.errors) {
-      clearErrors();
-      Object.entries(out.errors).forEach(([field, message]) => {
-        const node = document.getElementById(`err_${field}`);
-        if (node) node.textContent = message;
-      });
+    } else {
+      $('setup-screen').classList.add('hidden');
+      $('main-content').classList.remove('hidden');
     }
-    setStatus(out.error || 'Failed to save setup.', false);
-    return;
-  }
+  },
 
-  setStatus(out.message || 'Setup saved.', true);
-  await loadSetup();
-  await refreshEvents();
-}
+  async testConnection() {
+    const { valid, body } = this.validate();
+    if (!valid) {
+      this.setStatus('Fix validation errors before testing connection.', false);
+      Toasts.show('Validation errors in setup form.', 'error');
+      return;
+    }
 
-function renderEvents(events) {
-  const container = document.getElementById('events');
-  if (!events || !events.length) {
-    container.innerHTML = '<div class="small">No events yet.</div>';
-    return;
-  }
+    const response = await fetch('/api/setup/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
 
-  container.innerHTML = events.map((e) => {
-    const after = e.after || {};
-    const label = after.label || 'unknown';
-    const cam = after.camera || 'unknown';
-    const zones = (after.current_zones || after.entered_zones || []).join(', ') || 'none';
-    const type = e.type || 'event';
-    const ts = e.timestamp || '';
-    return `
-      <div class="event">
-        <div class="event-header">
-          <div>${type} - ${label}</div>
-          <span class="pill">Camera: ${cam}</span>
-        </div>
-        <div class="event-time">${ts}</div>
-        <div>Zones: ${zones}</div>
-      </div>
-    `;
-  }).join('');
-}
+    const result = await response.json();
+    if (result.ok) {
+      AppState.lastTestedConfigKey = this.mqttKey(body);
+      AppState.lastTestPassed = true;
+      const message = result.message || 'MQTT connection test passed.';
+      this.setStatus(message, true);
+      Toasts.show(message, 'ok');
+      return;
+    }
 
-async function refreshEvents() {
-  try {
-    const data = await fetch('/api/events').then((r) => r.json());
-    renderEvents(data.events || []);
-  } catch (e) {
-    const container = document.getElementById('events');
-    container.innerHTML = '<div class="small">Failed to load events.</div>';
-  }
-}
+    AppState.lastTestPassed = false;
+    const message = result.message || 'MQTT connection test failed.';
+    this.setStatus(message, false);
+    Toasts.show(message, 'error');
+  },
 
-window.refreshEvents = refreshEvents;
-window.saveSetup = saveSetup;
-window.testConnection = testConnection;
+  async saveSetup() {
+    const { valid, body } = this.validate();
+    if (!valid) {
+      this.setStatus('Please fix inline validation errors.', false);
+      Toasts.show('Unable to save setup: fix validation errors.', 'error');
+      return;
+    }
 
-window.onload = () => {
-  loadSetup();
-  refreshEvents();
-  setInterval(refreshEvents, 2000);
+    if (!AppState.lastTestPassed || AppState.lastTestedConfigKey !== this.mqttKey(body)) {
+      const message = 'Please run a successful MQTT connection test before finishing setup.';
+      this.setStatus(message, false);
+      Toasts.show(message, 'error');
+      return;
+    }
+
+    const response = await fetch('/api/setup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    const result = await response.json();
+    if (!result.ok) {
+      if (result.errors) {
+        this.clearErrors();
+        Object.entries(result.errors).forEach(([field, message]) => {
+          const node = $(`err_${field}`);
+          if (node) node.textContent = message;
+        });
+      }
+
+      const message = result.error || 'Failed to save setup.';
+      this.setStatus(message, false);
+      Toasts.show(message, 'error');
+      return;
+    }
+
+    const message = result.message || 'Setup saved.';
+    this.setStatus(message, true);
+    Toasts.show(message, 'ok');
+    await this.hydrate();
+    await EventsPanel.refresh();
+    await StatusCards.refresh();
+  },
 };
+
+const EventsPanel = {
+  container: null,
+
+  init() {
+    this.container = $('events');
+    $('refresh-events').addEventListener('click', () => this.refresh());
+  },
+
+  render(events) {
+    if (!events?.length) {
+      this.container.innerHTML = '<div class="small">No events yet.</div>';
+      return;
+    }
+
+    this.container.innerHTML = events.map((event) => {
+      const after = event.after || {};
+      const label = after.label || 'unknown';
+      const camera = after.camera || 'unknown';
+      const zones = (after.current_zones || after.entered_zones || []).join(', ') || 'none';
+      return `
+        <article class="event">
+          <div class="event-header">
+            <div>${event.type || 'event'} - ${label}</div>
+            <span class="pill">Camera: ${camera}</span>
+          </div>
+          <div class="event-time">${event.timestamp || ''}</div>
+          <div>Zones: ${zones}</div>
+        </article>
+      `;
+    }).join('');
+  },
+
+  async refresh() {
+    try {
+      const data = await fetch('/api/events').then((res) => res.json());
+      this.render(data.events || []);
+    } catch {
+      this.container.innerHTML = '<div class="small">Failed to load events.</div>';
+      Toasts.show('Could not fetch events from /api/events.', 'error');
+    }
+  },
+};
+
+const StatusCards = {
+  container: null,
+  lastRefresh: null,
+
+  init() {
+    this.container = $('status-cards');
+    this.render({
+      status: 'starting',
+      mqtt_connection_state: 'unknown',
+      recent_events: '-',
+      mqtt_config: {},
+    });
+  },
+
+  render(status) {
+    const cards = [
+      { label: 'Service', value: status.status || 'unknown' },
+      { label: 'MQTT', value: status.mqtt_connection_state || (status.mqtt_connected ? 'connected' : 'disconnected') },
+      { label: 'Topic', value: status.mqtt_config?.mqtt_topic || 'n/a' },
+      { label: 'Recent events', value: `${status.recent_events ?? 0}` },
+    ];
+
+    this.container.innerHTML = cards.map((card) => `
+      <article class="health-card">
+        <div class="health-label">${card.label}</div>
+        <div class="health-value">${card.value}</div>
+      </article>
+    `).join('');
+  },
+
+  async refresh() {
+    try {
+      const status = await fetch('/api/status').then((res) => res.json());
+      this.render(status);
+      this.lastRefresh = new Date();
+    } catch {
+      Toasts.show('Status refresh failed from /api/status.', 'error');
+    }
+  },
+};
+
+async function boot() {
+  Toasts.init();
+  Theme.init();
+  SetupForm.init();
+  EventsPanel.init();
+  StatusCards.init();
+
+  await SetupForm.hydrate();
+  await Promise.all([EventsPanel.refresh(), StatusCards.refresh()]);
+
+  AppState.eventsRefreshHandle = window.setInterval(() => EventsPanel.refresh(), 2000);
+  AppState.statusRefreshHandle = window.setInterval(() => StatusCards.refresh(), 5000);
+}
+
+window.addEventListener('load', () => {
+  boot();
+});

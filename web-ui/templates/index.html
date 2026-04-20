@@ -4,94 +4,122 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Doorbell Intent Engine</title>
-  <style>
-    body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
-    .container { max-width: 1200px; margin: 0 auto; background: #ffffff; padding: 20px; border-radius: 10px; }
-    .columns { display: flex; gap: 20px; flex-wrap: wrap; }
-    .card { flex: 1 1 360px; background: #fafafa; padding: 15px; border-radius: 8px; border: 1px solid #e5e5e5; }
-    label { display: block; margin-top: 10px; font-weight: bold; }
-    select, input { width: 100%; padding: 8px; margin-top: 6px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; }
-    button { margin-top: 12px; padding: 10px 12px; border: 0; border-radius: 6px; cursor: pointer; }
-    button.save { background: #4CAF50; color: #fff; }
-    button.refresh { background: #2196F3; color: #fff; }
-    button.test { background: #795548; color: #fff; margin-right: 8px; }
-    .small { color: #666; font-size: 0.9em; }
-    .event { border: 1px solid #e5e5e5; border-radius: 8px; padding: 10px; margin: 10px 0; background: #ffffff; }
-    .event-header { font-weight: bold; display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
-    .event-time { color: #666; font-size: 0.85em; margin-top: 4px; }
-    .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #e9f5ff; color: #0b5394; font-size: 0.85em; }
-    .hidden { display: none; }
-    .error { color: #c62828; font-size: 0.85em; margin-top: 4px; min-height: 1em; }
-    .status { margin-top: 12px; padding: 10px; border-radius: 6px; font-size: 0.92em; }
-    .status-ok { background: #e8f5e9; color: #1b5e20; border: 1px solid #c8e6c9; }
-    .status-bad { background: #ffebee; color: #b71c1c; border: 1px solid #ffcdd2; }
-    .setup-screen { margin-bottom: 20px; }
-  </style>
+  <link rel="stylesheet" href="/static/styles/main.css" />
 </head>
 <body>
-  <div class="container">
-    <h1>Doorbell Intent Engine</h1>
-
-    <div id="setup-screen" class="card setup-screen hidden">
-      <h2>Initial Setup Required</h2>
-      <div class="small" id="setup-reasons">Complete setup to enable MQTT event monitoring.</div>
-
-      <label for="mqtt_host">MQTT host</label>
-      <input id="mqtt_host" placeholder="mqtt or 192.168.x.x" />
-      <div id="err_mqtt_host" class="error"></div>
-
-      <label for="mqtt_port">MQTT port</label>
-      <input id="mqtt_port" type="number" min="1" max="65535" placeholder="1883" />
-      <div id="err_mqtt_port" class="error"></div>
-
-      <label for="mqtt_topic">MQTT topic</label>
-      <input id="mqtt_topic" placeholder="frigate/events" />
-      <div id="err_mqtt_topic" class="error"></div>
-
-      <label for="frigate_camera">Frigate camera (events + snapshots)</label>
-      <select id="frigate_camera"></select>
-      <div id="err_frigate_camera" class="error"></div>
-
-      <label for="protect_camera_id">UniFi Protect talkback camera (optional)</label>
-      <select id="protect_camera_id"></select>
-
-      <label for="camera_rtsp_url">RTSP/RTSPS URL override (optional)</label>
-      <input id="camera_rtsp_url" placeholder="rtsps://... (leave blank to use Protect discovery)" />
-
-      <h3>API Endpoints & Keys (optional)</h3>
-      <div class="small">Set these here if you prefer not to manage them only through environment variables.</div>
-
-      <label for="frigate_host">Frigate API host</label>
-      <input id="frigate_host" placeholder="frigate or 192.168.x.x" />
-
-      <label for="frigate_port">Frigate API port</label>
-      <input id="frigate_port" type="number" min="1" max="65535" placeholder="5000" />
-
-      <label for="frigate_api_key">Frigate API key</label>
-      <input id="frigate_api_key" type="password" placeholder="Bearer token (optional)" />
-
-      <label for="protect_base_url">UniFi Protect base URL</label>
-      <input id="protect_base_url" placeholder="https://192.168.x.x/proxy/protect/api" />
-
-      <label for="protect_api_key">UniFi Protect API key</label>
-      <input id="protect_api_key" type="password" placeholder="Protect API key (optional)" />
-
+  <main class="page" aria-live="polite">
+    <header class="hero">
       <div>
-        <button class="test" onclick="testConnection()">Test MQTT connection</button>
-        <button class="save" onclick="saveSetup()">Finish setup</button>
+        <p class="eyebrow">Dashboard</p>
+        <h1>Doorbell Intent Engine</h1>
+        <p class="subtitle">Monitor Frigate MQTT events and configure runtime settings without changing backend APIs.</p>
       </div>
-      <div id="setup-status" class="status hidden"></div>
-    </div>
+      <button id="theme-toggle" class="btn btn-ghost" type="button" aria-label="Toggle dark mode">🌙 Theme</button>
+    </header>
 
-    <div id="main-content" class="columns hidden">
-      <div class="card">
-        <h2>Events</h2>
-        <div class="small">Live view of recent Frigate events coming over MQTT.</div>
-        <button class="refresh" onclick="refreshEvents()">Refresh now</button>
-        <div id="events"></div>
+    <section id="status-section" class="panel" aria-labelledby="status-heading">
+      <div class="panel-head">
+        <h2 id="status-heading">Status &amp; Health</h2>
+        <p class="small">Live snapshot from <code>/api/status</code>.</p>
       </div>
-    </div>
-  </div>
+      <div id="status-cards" class="status-grid"></div>
+    </section>
+
+    <section id="setup-screen" class="panel hidden" aria-labelledby="setup-heading">
+      <div class="panel-head">
+        <h2 id="setup-heading">Initial Setup Required</h2>
+        <p class="small" id="setup-reasons">Complete setup to enable MQTT event monitoring.</p>
+      </div>
+
+      <form id="setup-form" class="form-grid" novalidate>
+        <div class="form-group">
+          <label for="mqtt_host">MQTT host</label>
+          <input id="mqtt_host" placeholder="mqtt or 192.168.x.x" />
+          <div id="err_mqtt_host" class="error"></div>
+        </div>
+
+        <div class="form-group">
+          <label for="mqtt_port">MQTT port</label>
+          <input id="mqtt_port" type="number" min="1" max="65535" placeholder="1883" />
+          <div id="err_mqtt_port" class="error"></div>
+        </div>
+
+        <div class="form-group form-group-full">
+          <label for="mqtt_topic">MQTT topic</label>
+          <input id="mqtt_topic" placeholder="frigate/events" />
+          <div id="err_mqtt_topic" class="error"></div>
+        </div>
+
+        <div class="form-group">
+          <label for="frigate_camera">Frigate camera (events + snapshots)</label>
+          <select id="frigate_camera"></select>
+          <div id="err_frigate_camera" class="error"></div>
+        </div>
+
+        <div class="form-group">
+          <label for="protect_camera_id">UniFi Protect talkback camera (optional)</label>
+          <select id="protect_camera_id"></select>
+        </div>
+
+        <div class="form-group form-group-full">
+          <label for="camera_rtsp_url">RTSP/RTSPS URL override (optional)</label>
+          <input id="camera_rtsp_url" placeholder="rtsps://... (leave blank to use Protect discovery)" />
+        </div>
+
+        <fieldset class="fieldset form-group-full">
+          <legend>API Endpoints &amp; Keys (optional)</legend>
+          <p class="small">Set these here if you prefer not to manage them only through environment variables.</p>
+
+          <div class="form-grid nested-grid">
+            <div class="form-group">
+              <label for="frigate_host">Frigate API host</label>
+              <input id="frigate_host" placeholder="frigate or 192.168.x.x" />
+            </div>
+
+            <div class="form-group">
+              <label for="frigate_port">Frigate API port</label>
+              <input id="frigate_port" type="number" min="1" max="65535" placeholder="5000" />
+            </div>
+
+            <div class="form-group form-group-full">
+              <label for="frigate_api_key">Frigate API key</label>
+              <input id="frigate_api_key" type="password" placeholder="Bearer token (optional)" />
+            </div>
+
+            <div class="form-group">
+              <label for="protect_base_url">UniFi Protect base URL</label>
+              <input id="protect_base_url" placeholder="https://192.168.x.x/proxy/protect/api" />
+            </div>
+
+            <div class="form-group">
+              <label for="protect_api_key">UniFi Protect API key</label>
+              <input id="protect_api_key" type="password" placeholder="Protect API key (optional)" />
+            </div>
+          </div>
+        </fieldset>
+
+        <div class="actions form-group-full">
+          <button id="test-connection" class="btn btn-secondary" type="button">Test MQTT connection</button>
+          <button id="save-setup" class="btn btn-primary" type="button">Finish setup</button>
+        </div>
+      </form>
+
+      <div id="setup-status" class="status hidden"></div>
+    </section>
+
+    <section id="main-content" class="panel hidden" aria-labelledby="events-heading">
+      <div class="panel-head split">
+        <div>
+          <h2 id="events-heading">Live Events</h2>
+          <p class="small">Recent Frigate events streamed via MQTT.</p>
+        </div>
+        <button id="refresh-events" class="btn btn-secondary" type="button">Refresh now</button>
+      </div>
+      <div id="events" class="events-list"></div>
+    </section>
+
+    <aside id="toast-region" class="toast-region" aria-live="assertive" aria-atomic="true"></aside>
+  </main>
 
   <script src="/static/app.js"></script>
 </body>
