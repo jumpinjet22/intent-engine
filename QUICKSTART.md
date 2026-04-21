@@ -8,6 +8,9 @@
 - ✅ MQTT broker with valid username/password credentials
 - ✅ (Optional) UniFi Protect / G6 Entry doorbell integration
 - ✅ (Optional) Frigate NVR integration
+- ✅ Access to Docker Hub images:
+  - `jumpnjet22/intent-engine:latest`
+  - `jumpnjet22/web-ui:latest`
 
 ### 2. (Optional) Get UniFi Protect Credentials
 
@@ -38,15 +41,26 @@ cp .env.example .env
 nano .env
 ```
 
+**Docker Hub image configuration (recommended):**
+```bash
+INTENT_ENGINE_IMAGE=jumpnjet22/intent-engine:latest
+WEB_UI_IMAGE=jumpnjet22/web-ui:latest
+```
+
 **Minimum required:**
 ```bash
 MQTT_HOST=localhost
 MQTT_PORT=1883
-MQTT_USERNAME=doorbell
-MQTT_PASSWORD=changeme
 ```
 
-> **Important:** `MQTT_USERNAME` and `MQTT_PASSWORD` cannot be empty. The intent engine fails startup validation if either value is blank.
+**MQTT credentials (recommended via Docker secrets):**
+```bash
+cp secrets/mqtt_username.txt.example secrets/mqtt_username.txt
+cp secrets/mqtt_password.txt.example secrets/mqtt_password.txt
+```
+
+> **Important:** Provide MQTT credentials either with `MQTT_USERNAME`/`MQTT_PASSWORD` env vars
+> or with Docker secrets (`MQTT_USERNAME_FILE`/`MQTT_PASSWORD_FILE`).
 
 **Optional integrations (not required for minimum boot):**
 ```bash
@@ -75,8 +89,18 @@ This will:
 ### 5. Start the System
 
 ```bash
+# Standard compose
 docker-compose up -d
+
+# Compose + Docker secrets override (recommended)
+docker compose -f docker-compose.yml -f docker-compose.secrets.yml up -d
 ```
+
+> If needed, pre-pull images manually:
+> ```bash
+> docker pull jumpnjet22/intent-engine:latest
+> docker pull jumpnjet22/web-ui:latest
+> ```
 
 ### 6. Test It!
 
