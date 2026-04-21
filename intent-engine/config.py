@@ -13,6 +13,23 @@ def _env_bool(name: str, default: str = "false") -> bool:
     return os.getenv(name, default).lower() == "true"
 
 
+def _env_or_file(name: str, default: str = "") -> str:
+    """Return env var value or load it from NAME_FILE when provided."""
+    value = os.getenv(name)
+    if value is not None:
+        return value
+
+    file_path = os.getenv(f"{name}_FILE")
+    if not file_path:
+        return default
+
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return default
+
+
 class Config(BaseModel):
     """Validated configuration for the doorbell intent engine."""
 
@@ -23,8 +40,8 @@ class Config(BaseModel):
     # MQTT configuration (required)
     mqtt_host: str = Field(default_factory=lambda: os.getenv("MQTT_HOST", "localhost"))
     mqtt_port: int = Field(default_factory=lambda: int(os.getenv("MQTT_PORT", "1883")))
-    mqtt_username: str = Field(default_factory=lambda: os.getenv("MQTT_USERNAME", ""))
-    mqtt_password: str = Field(default_factory=lambda: os.getenv("MQTT_PASSWORD", ""))
+    mqtt_username: str = Field(default_factory=lambda: _env_or_file("MQTT_USERNAME", ""))
+    mqtt_password: str = Field(default_factory=lambda: _env_or_file("MQTT_PASSWORD", ""))
     mqtt_client_id: str = Field(default_factory=lambda: os.getenv("MQTT_CLIENT_ID", ""))
     mqtt_tls_enabled: bool = Field(default_factory=lambda: _env_bool("MQTT_TLS_ENABLED", "false"))
     mqtt_tls_ca_cert: Optional[str] = Field(default_factory=lambda: os.getenv("MQTT_TLS_CA_CERT"))

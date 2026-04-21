@@ -61,12 +61,22 @@ nano .env
 ```bash
 MQTT_HOST=localhost
 MQTT_PORT=1883
-MQTT_USERNAME=doorbell
-MQTT_PASSWORD=changeme
 ```
 
-**MQTT authentication is required.** The service will refuse to start if `MQTT_USERNAME` or
-`MQTT_PASSWORD` are missing.【F:intent-engine/config.py†L17-L79】
+**MQTT authentication is required.** Provide credentials either via environment variables
+(`MQTT_USERNAME` / `MQTT_PASSWORD`) or Docker secrets (`MQTT_USERNAME_FILE` / `MQTT_PASSWORD_FILE`).
+
+**Docker Hub images (recommended for deployment):**
+```bash
+INTENT_ENGINE_IMAGE=jumpnjet22/intent-engine:latest
+WEB_UI_IMAGE=jumpnjet22/web-ui:latest
+```
+
+**Docker secrets setup (recommended):**
+```bash
+cp secrets/mqtt_username.txt.example secrets/mqtt_username.txt
+cp secrets/mqtt_password.txt.example secrets/mqtt_password.txt
+```
 
 **To get your UniFi Protect API token:**
 1. Log into UniFi Protect
@@ -109,8 +119,15 @@ Or the system will generate a quick "Hello!" using TTS.
 docker-compose up ollama -d
 docker exec -it doorbell-ollama ollama pull llama3.2:3b
 
-# Start everything except web-ui (intent-engine, mqtt, ollama)
+# Optional: pre-pull published Docker Hub images
+docker pull jumpnjet22/intent-engine:latest
+docker pull jumpnjet22/web-ui:latest
+
+# Start all services
 docker-compose up -d
+
+# Start all services with Docker secrets override (recommended)
+docker compose -f docker-compose.yml -f docker-compose.secrets.yml up -d
 
 # Web UI path A (local development build from ./web-ui)
 docker compose up -d --build web-ui
@@ -194,13 +211,13 @@ It publishes:
 - `doorbell/tts/status`
 - `doorbell/escalate`
 
-See `.env.example` for topic overrides.【F:.env.example†L1-L26】
+See `.env.example` for topic overrides.
 
 ### MQTT Authentication (Required)
 
 The intent engine requires `MQTT_USERNAME` and `MQTT_PASSWORD` on startup. If you use the bundled
 Mosquitto container, create a password file and disable anonymous access in `mosquitto.conf` before
-starting the stack.【F:mosquitto/config/mosquitto.conf†L1-L5】
+starting the stack.
 
 ### Web UI image/build mode
 
